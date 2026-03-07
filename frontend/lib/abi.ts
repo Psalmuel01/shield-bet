@@ -20,8 +20,8 @@ export const shieldBetAbi = [
           { name: "deadline", type: "uint256" },
           { name: "outcome", type: "uint8" },
           { name: "resolved", type: "bool" },
-          { name: "totalYes", type: "uint64" },
-          { name: "totalNo", type: "uint64" },
+          { name: "totalYes", type: "bytes32" },
+          { name: "totalNo", type: "bytes32" },
           { name: "creator", type: "address" }
         ]
       }
@@ -49,7 +49,7 @@ export const shieldBetAbi = [
       { name: "marketId", type: "uint256" },
       { name: "encOutcome", type: "bytes32" },
       { name: "encAmount", type: "bytes32" },
-      { name: "proof", type: "bytes" }
+      { name: "inputProof", type: "bytes" }
     ],
     outputs: []
   },
@@ -65,6 +65,17 @@ export const shieldBetAbi = [
   },
   {
     type: "function",
+    name: "assignWinnerPayout",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "marketId", type: "uint256" },
+      { name: "winner", type: "address" },
+      { name: "payoutAmount", type: "uint256" }
+    ],
+    outputs: []
+  },
+  {
+    type: "function",
     name: "claimWinnings",
     stateMutability: "nonpayable",
     inputs: [{ name: "marketId", type: "uint256" }],
@@ -75,14 +86,31 @@ export const shieldBetAbi = [
     name: "getMyBet",
     stateMutability: "view",
     inputs: [{ name: "marketId", type: "uint256" }],
-    outputs: [{ name: "", type: "uint64" }]
+    outputs: [{ name: "", type: "bytes32" }]
   },
   {
     type: "function",
     name: "getMyOutcome",
     stateMutability: "view",
     inputs: [{ name: "marketId", type: "uint256" }],
-    outputs: [{ name: "", type: "uint8" }]
+    outputs: [{ name: "", type: "bytes32" }]
+  },
+  {
+    type: "function",
+    name: "hasPosition",
+    stateMutability: "view",
+    inputs: [
+      { name: "marketId", type: "uint256" },
+      { name: "account", type: "address" }
+    ],
+    outputs: [{ name: "", type: "bool" }]
+  },
+  {
+    type: "function",
+    name: "owner",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }]
   },
   {
     type: "function",

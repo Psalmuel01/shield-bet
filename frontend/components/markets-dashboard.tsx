@@ -71,8 +71,8 @@ export function MarketsDashboard() {
         deadline: bigint;
         outcome: number;
         resolved: boolean;
-        totalYes: bigint;
-        totalNo: bigint;
+        totalYes: `0x${string}`;
+        totalNo: `0x${string}`;
         creator: `0x${string}`;
       };
       rows.push({

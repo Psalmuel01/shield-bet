@@ -1,9 +1,9 @@
 import { defineChain } from "viem";
 
-const chainId = Number(process.env.NEXT_PUBLIC_CHAIN_ID || 8009);
-const rpcUrl = process.env.NEXT_PUBLIC_CHAIN_RPC_URL || "https://rpc.zama.example";
-const chainName = process.env.NEXT_PUBLIC_CHAIN_NAME || "Zama Testnet";
-const explorer = process.env.NEXT_PUBLIC_CHAIN_EXPLORER || "https://explorer.zama.example";
+const chainId = Number(process.env.NEXT_PUBLIC_CHAIN_ID || 11155111);
+const rpcUrl = process.env.NEXT_PUBLIC_CHAIN_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com/";
+const chainName = process.env.NEXT_PUBLIC_CHAIN_NAME || "Ethereum Sepolia";
+const explorer = process.env.NEXT_PUBLIC_CHAIN_EXPLORER || "https://sepolia.etherscan.io";
 
 export const zamaChain = defineChain({
   id: chainId,

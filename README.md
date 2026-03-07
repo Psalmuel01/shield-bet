@@ -27,18 +27,19 @@ flowchart LR
 `contracts/contracts/ShieldBet.sol` includes:
 
 - `createMarket(question, deadline) -> marketId`
-- `placeBet(marketId, encOutcome, encAmount, proof)` (payable)
+- `placeBet(marketId, externalEuint8, externalEuint64, inputProof)` (payable)
 - `resolveMarket(marketId, outcome)` (`onlyOwner`)
+- `assignWinnerPayout(marketId, winner, payoutAmount)` (`onlyOwner`)
 - `claimWinnings(marketId)`
-- `getMyBet(marketId) -> euint64-style value`
-- payout calculation from winner share of losing pool
+- `getMyBet(marketId) -> euint64 handle`
+- `getMyOutcome(marketId) -> euint8 handle`
 - CID anchoring hooks:
   - `anchorMarketMetadataCID(marketId, cid)`
   - `anchorResolutionCID(marketId, cid)`
 
 Notes:
-- For local development, encrypted types are represented with Solidity value types (`euint64`, `euint8`, `einput`) and proof validation is deterministic.
-- The contract surface and transaction shape are prepared for fhEVM plugin swap-in.
+- Uses official FHEVM primitives (`FHE.fromExternal`, `FHE.add`, `FHE.select`, `FHE.allowThis`, `FHE.allow`).
+- Winner payouts are assigned by owner/oracle flow after resolution.
 
 ## Frontend Scope
 
@@ -54,8 +55,9 @@ Notes:
 - `/markets/[id]` bet page with:
   - YES/NO selection
   - amount entry
-  - client-side encryption payload creation
+  - client-side encryption with `@zama-fhe/relayer-sdk`
   - confidential position confirmation
+  - owner admin controls (resolve + assign payout)
   - claim flow + Lit response reveal
 - `app/api/lit/claim` integration seam:
   - returns mock decrypted payout if Lit secrets are absent
@@ -106,6 +108,13 @@ Open [http://localhost:3000](http://localhost:3000)
 - `NEXT_PUBLIC_CHAIN_EXPLORER`
 - `NEXT_PUBLIC_SHIELDBET_ADDRESS`
 - `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID`
+- `NEXT_PUBLIC_FHEVM_RELAYER_URL`
+- `NEXT_PUBLIC_FHEVM_ACL_CONTRACT`
+- `NEXT_PUBLIC_FHEVM_KMS_CONTRACT`
+- `NEXT_PUBLIC_FHEVM_INPUT_VERIFIER_CONTRACT`
+- `NEXT_PUBLIC_FHEVM_VERIFY_DECRYPTION_CONTRACT`
+- `NEXT_PUBLIC_FHEVM_VERIFY_INPUT_CONTRACT`
+- `NEXT_PUBLIC_FHEVM_GATEWAY_CHAIN_ID`
 - `LIT_ACTION_CID` (optional)
 - `LIT_NETWORK` (optional)
 - `LIT_RECAP` (optional)
@@ -114,12 +123,12 @@ Open [http://localhost:3000](http://localhost:3000)
 
 1. Open `/markets`, connect wallet.
 2. Open a market and place an encrypted bet (payload encoded client-side).
-3. Resolve market from admin wallet (`resolveMarket`) or Hardhat console.
-4. Claim winnings from winner wallet.
-5. Verify anchored CIDs from dashboard links.
+3. Resolve market from owner wallet (`resolveMarket`).
+4. Assign winner payout from owner wallet (`assignWinnerPayout`).
+5. Claim winnings from winner wallet.
+6. Verify anchored CIDs from dashboard links.
 
 ## Next Integration Tasks
 
-- Replace placeholder encrypted type handling with official Zama fhEVM contract/plugin primitives.
 - Replace `lib/filecoin.ts` mocks with Synapse SDK uploads to Calibration testnet.
 - Replace `/api/lit/claim` mock path with real PKP + Lit Action execution and access-control checks.
