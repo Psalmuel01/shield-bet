@@ -14,8 +14,10 @@ import { BetOutcome, encryptBetInputs } from "@/lib/encryption";
 import { uploadResolution } from "@/lib/filecoin";
 import { cidToExplorer, formatDeadline, getCountdown } from "@/lib/format";
 import { shieldBetConfig } from "@/lib/contract";
+import { decodeMarketView } from "@/lib/market-contract";
 import { getEncryptedBandCount, inferCategory, getMarketStatus } from "@/lib/market-ui";
 import { getLocalBet, saveLocalBet } from "@/lib/local-bets";
+import { logError, logInfo } from "@/lib/telemetry";
 
 export default function MarketBetPage() {
   const params = useParams<{ id: string }>();
@@ -82,9 +84,39 @@ export default function MarketBetPage() {
     functionName: "getClaimQuote",
     args: [marketId, address || "0x0000000000000000000000000000000000000000"],
     query: {
-      enabled: Boolean(address && marketData?.resolved)
+      enabled: Boolean(address && decodeMarketView(marketData)?.resolved)
     }
   });
+
+  useEffect(() => {
+    logInfo("market-detail", "read market core", {
+      marketId: marketId.toString(),
+      contract: shieldBetConfig.address,
+      marketData: marketData || null
+    });
+  }, [marketData, marketId]);
+
+  useEffect(() => {
+    logInfo("market-detail", "read market cids", {
+      marketId: marketId.toString(),
+      metadataCid: metadataCid || "",
+      resolutionCid: resolutionCid || ""
+    });
+  }, [marketId, metadataCid, resolutionCid]);
+
+  useEffect(() => {
+    logInfo("market-detail", "read position and claim quote", {
+      marketId: marketId.toString(),
+      account: address || "",
+      hasPosition: Boolean(hasPosition),
+      claimQuote: claimQuote
+        ? {
+            payout: claimQuote[0].toString(),
+            eligible: claimQuote[1]
+          }
+        : null
+    });
+  }, [marketId, address, hasPosition, claimQuote]);
 
   useEffect(() => {
     const bet = getLocalBet(marketId, address);
@@ -100,11 +132,16 @@ export default function MarketBetPage() {
     return <p className="subtle">Loading market...</p>;
   }
 
-  const question = marketData.question;
-  const deadline = marketData.deadline;
-  const outcome = marketData.outcome;
-  const resolved = marketData.resolved;
-  const creator = marketData.creator;
+  const parsedMarket = decodeMarketView(marketData);
+  if (!parsedMarket) {
+    return <p className="text-sm text-rose-500">Unable to decode market payload. Check contract ABI/config.</p>;
+  }
+
+  const question = parsedMarket.question;
+  const deadline = parsedMarket.deadline;
+  const outcome = parsedMarket.outcome;
+  const resolved = parsedMarket.resolved;
+  const creator = parsedMarket.creator;
 
   const isOwner = Boolean(address && ownerAddress && address.toLowerCase() === ownerAddress.toLowerCase());
   const marketStatus = getMarketStatus(deadline, resolved);
@@ -127,6 +164,12 @@ export default function MarketBetPage() {
       setStatusMessage(null);
 
       const amountWei = parseEther(amount);
+      logInfo("market-detail", "placeBet encrypt request", {
+        marketId: marketId.toString(),
+        account: address,
+        selectedOutcome,
+        amountWei: amountWei.toString()
+      });
       const encrypted = await encryptBetInputs(selectedOutcome, amountWei, {
         contractAddress: shieldBetConfig.address,
         userAddress: getAddress(address)
@@ -137,6 +180,10 @@ export default function MarketBetPage() {
         functionName: "placeBet",
         args: [marketId, encrypted.encOutcome, encrypted.encAmount, encrypted.inputProof],
         value: amountWei
+      });
+      logInfo("market-detail", "placeBet tx submitted", {
+        marketId: marketId.toString(),
+        account: address
       });
 
       saveLocalBet({
@@ -150,6 +197,7 @@ export default function MarketBetPage() {
       setLocalPosition(selectedOutcome === 1 ? "YES" : "NO");
       setStatusMessage("Bet placed confidentially. Your position is now encrypted.");
     } catch (error) {
+      logError("market-detail", "placeBet failed", error);
       const message = error instanceof Error ? error.message : "Bet transaction failed";
       setStatusMessage(message);
     }
@@ -167,6 +215,12 @@ export default function MarketBetPage() {
 
       setStatusMessage("Running Lit Action eligibility check...");
       const { runLitClaimAction } = await import("@/lib/lit");
+      logInfo("market-detail", "claim lit action start", {
+        marketId: marketId.toString(),
+        account: normalizedAccount,
+        actionCid: litActionCid,
+        expectedPayoutWei: claimPayout.toString()
+      });
       litExecution = await runLitClaimAction({
         actionCid: litActionCid,
         marketId: marketId.toString(),
@@ -174,19 +228,41 @@ export default function MarketBetPage() {
         expectedPayoutWei: claimPayout.toString(),
         walletClient
       });
+      logInfo("market-detail", "claim lit action complete", {
+        marketId: marketId.toString(),
+        actionCid: litExecution.actionCid,
+        litLogs: litExecution.logs
+      });
     }
 
+    logInfo("market-detail", "claim submit tx", {
+      marketId: marketId.toString(),
+      account: normalizedAccount
+    });
     const txHash = await writeContractAsync({
       ...shieldBetConfig,
       functionName: "claimWinnings",
       args: [marketId]
     });
+    logInfo("market-detail", "claim tx submitted", { txHash });
 
     const receipt = await publicClient?.waitForTransactionReceipt({ hash: txHash });
     if (!receipt || receipt.status !== "success") {
       throw new Error("Claim transaction failed or was not confirmed");
     }
+    logInfo("market-detail", "claim tx confirmed", {
+      txHash,
+      status: receipt.status,
+      logsCount: receipt.logs.length
+    });
 
+    logInfo("market-detail", "claim verification request", {
+      marketId: marketId.toString(),
+      account: normalizedAccount,
+      txHash,
+      expectedPayoutWei: claimPayout.toString(),
+      litActionCid: litExecution?.actionCid || ""
+    });
     const verifyResponse = await fetch("/api/lit/claim", {
       method: "POST",
       headers: {
@@ -214,6 +290,7 @@ export default function MarketBetPage() {
     if (!verifyResponse.ok) {
       throw new Error(verifyBody.error || "Claim verification failed");
     }
+    logInfo("market-detail", "claim verification response", verifyBody);
 
     setStatusMessage(verifyBody.mode === "lit" ? "Claim verified with Lit and submitted." : "Claim verified on-chain and submitted.");
     return verifyBody;
@@ -223,18 +300,33 @@ export default function MarketBetPage() {
     try {
       setAdminMessage(null);
       setAdminMessage("Submitting market resolution...");
+      logInfo("market-detail", "resolve submit tx", {
+        marketId: marketId.toString(),
+        outcome: adminResolveOutcome
+      });
       const resolveHash = await writeContractAsync({
         ...shieldBetConfig,
         functionName: "resolveMarket",
         args: [marketId, adminResolveOutcome]
       });
+      logInfo("market-detail", "resolve tx submitted", { resolveHash });
 
       const resolveReceipt = await publicClient?.waitForTransactionReceipt({ hash: resolveHash });
       if (!resolveReceipt || resolveReceipt.status !== "success") {
         throw new Error("Resolution transaction failed");
       }
+      logInfo("market-detail", "resolve tx confirmed", {
+        resolveHash,
+        status: resolveReceipt.status
+      });
 
       setAdminMessage("Uploading resolution artifact to Filecoin...");
+      logInfo("market-detail", "upload resolution artifact", {
+        marketId: marketId.toString(),
+        outcome: adminResolveOutcome,
+        resolver: address || "",
+        txHash: resolveHash
+      });
       const upload = await uploadResolution({
         marketId,
         outcome: adminResolveOutcome,
@@ -243,20 +335,31 @@ export default function MarketBetPage() {
         txHash: resolveHash,
         question
       });
+      logInfo("market-detail", "resolution upload success", upload);
 
       setAdminMessage("Anchoring resolution CID on-chain...");
+      logInfo("market-detail", "submit anchorResolutionCID tx", {
+        marketId: marketId.toString(),
+        cid: upload.cid
+      });
       const anchorHash = await writeContractAsync({
         ...shieldBetConfig,
         functionName: "anchorResolutionCID",
         args: [marketId, upload.cid]
       });
+      logInfo("market-detail", "anchorResolutionCID tx submitted", { anchorHash });
       const anchorReceipt = await publicClient?.waitForTransactionReceipt({ hash: anchorHash });
       if (!anchorReceipt || anchorReceipt.status !== "success") {
         throw new Error("Resolution CID anchoring transaction failed");
       }
+      logInfo("market-detail", "anchorResolutionCID tx confirmed", {
+        anchorHash,
+        status: anchorReceipt.status
+      });
 
       setAdminMessage(`Market resolved and CID anchored (${upload.provider}/${upload.network}).`);
     } catch (error) {
+      logError("market-detail", "resolve flow failed", error);
       const message = error instanceof Error ? error.message : "Failed to resolve market";
       setAdminMessage(message);
     }
@@ -271,14 +374,23 @@ export default function MarketBetPage() {
     try {
       setAdminMessage(null);
       const payoutWei = parseEther(adminPayout || "0");
+      logInfo("market-detail", "assign payout submit tx", {
+        marketId: marketId.toString(),
+        winner: getAddress(adminWinner),
+        payoutWei: payoutWei.toString()
+      });
 
       await writeContractAsync({
         ...shieldBetConfig,
         functionName: "assignWinnerPayout",
         args: [marketId, getAddress(adminWinner), payoutWei]
       });
+      logInfo("market-detail", "assign payout tx submitted", {
+        marketId: marketId.toString()
+      });
       setAdminMessage("Payout assignment transaction sent.");
     } catch (error) {
+      logError("market-detail", "assign payout failed", error);
       const message = error instanceof Error ? error.message : "Failed to assign payout";
       setAdminMessage(message);
     }

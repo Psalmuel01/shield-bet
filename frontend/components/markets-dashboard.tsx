@@ -1,10 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAccount, useReadContract, useReadContracts } from "wagmi";
 import { MarketCard } from "@/components/market-card";
 import { shieldBetConfig } from "@/lib/contract";
+import { decodeMarketView } from "@/lib/market-contract";
 import { getEncryptedBandCount, inferCategory, MarketCategory } from "@/lib/market-ui";
+import { logInfo, logWarn } from "@/lib/telemetry";
 
 type MarketTab = "All" | "Crypto" | "Politics" | "Sports" | "Science" | "My Markets";
 type SortOption = "Closing Soon" | "Newest" | "Most Activity";
@@ -24,6 +26,7 @@ interface ParsedMarket {
 
 const tabs: MarketTab[] = ["All", "Crypto", "Politics", "Sports", "Science", "My Markets"];
 const sortOptions: SortOption[] = ["Closing Soon", "Newest", "Most Activity"];
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 export function MarketsDashboard() {
   const { address } = useAccount();
@@ -35,12 +38,30 @@ export function MarketsDashboard() {
     functionName: "marketCount"
   });
 
-  console.log("Market count:", marketCount?.toString());
+  useEffect(() => {
+    logInfo("markets-dashboard", "read marketCount", {
+      contract: shieldBetConfig.address,
+      marketCount: marketCount?.toString() || "0"
+    });
+  }, [marketCount]);
 
   const ids = useMemo(() => {
-    if (!marketCount) return [] as bigint[];
-    return Array.from({ length: Number(marketCount) }, (_, idx) => BigInt(idx + 1));
+    if (marketCount === undefined || marketCount === null) return [] as bigint[];
+
+    const count = Number(marketCount);
+    if (!Number.isFinite(count) || count <= 0) return [] as bigint[];
+
+    // Probe both 1-based and 0-based indexing because deployed variants may differ.
+    const oneBased = Array.from({ length: count }, (_, idx) => BigInt(idx + 1));
+    const zeroBased = Array.from({ length: count }, (_, idx) => BigInt(idx));
+    return [...new Set([...oneBased, ...zeroBased].map((value) => value.toString()))].map((value) => BigInt(value));
   }, [marketCount]);
+
+  useEffect(() => {
+    logInfo("markets-dashboard", "derived market ids", {
+      ids: ids.map((id) => id.toString())
+    });
+  }, [ids]);
 
   const contracts = useMemo(
     () =>
@@ -71,7 +92,16 @@ export function MarketsDashboard() {
     }
   });
 
-  console.log("Market batch:", marketBatch);
+  useEffect(() => {
+    if (!marketBatch?.length) return;
+    logInfo("markets-dashboard", "read market batch", {
+      calls: marketBatch.length,
+      statuses: marketBatch.map((entry, idx) => ({
+        idx,
+        status: entry.status
+      }))
+    });
+  }, [marketBatch]);
 
   const markets = useMemo(() => {
     if (!marketBatch?.length) return [] as ParsedMarket[];
@@ -83,17 +113,33 @@ export function MarketsDashboard() {
       const resolutionRes = marketBatch[i + 2];
       const marketId = ids[i / 3];
 
-      if (marketRes?.status !== "success" || !marketRes.result) continue;
+      if (marketRes?.status !== "success" || !marketRes.result) {
+        logWarn("markets-dashboard", "market read failed", {
+          marketId: marketId.toString(),
+          marketStatus: marketRes?.status,
+          marketError: marketRes?.status === "failure" ? String(marketRes.error) : ""
+        });
+        continue;
+      }
 
-      const market = marketRes.result as {
-        question: string;
-        deadline: bigint;
-        outcome: number;
-        resolved: boolean;
-        totalYes: `0x${string}`;
-        totalNo: `0x${string}`;
-        creator: `0x${string}`;
-      };
+      const market = decodeMarketView(marketRes.result);
+      if (!market) {
+        logWarn("markets-dashboard", "unable to decode market payload", {
+          marketId: marketId.toString(),
+          raw: marketRes.result
+        });
+        continue;
+      }
+
+      const hasSignal =
+        market.question.trim().length > 0 || market.deadline > 0n || market.creator.toLowerCase() !== ZERO_ADDRESS;
+      if (!hasSignal) {
+        logWarn("markets-dashboard", "market skipped as empty/default struct", {
+          marketId: marketId.toString(),
+          market
+        });
+        continue;
+      }
 
       rows.push({
         marketId,
@@ -112,7 +158,19 @@ export function MarketsDashboard() {
     return rows;
   }, [ids, marketBatch]);
 
-  console.log("Markets:", markets);
+  useEffect(() => {
+    logInfo("markets-dashboard", "parsed markets", {
+      count: markets.length,
+      markets: markets.map((market) => ({
+        marketId: market.marketId.toString(),
+        question: market.question,
+        deadline: market.deadline.toString(),
+        creator: market.creator,
+        metadataCid: market.metadataCid,
+        resolutionCid: market.resolutionCid
+      }))
+    });
+  }, [markets]);
 
   const filtered = useMemo(() => {
     let next = markets;
@@ -136,6 +194,11 @@ export function MarketsDashboard() {
 
     return next;
   }, [activeTab, address, markets, sortBy]);
+
+  const hasReadMismatch = useMemo(() => {
+    const count = marketCount ? Number(marketCount) : 0;
+    return count > 0 && markets.length === 0;
+  }, [marketCount, markets.length]);
 
   if (loadingCount || loadingMarkets) {
     return <p className="subtle">Loading encrypted markets...</p>;
@@ -188,7 +251,11 @@ export function MarketsDashboard() {
       {!filtered.length ? (
         <div className="surface p-8 text-center">
           <h2 className="section-title mb-2">No markets found</h2>
-          <p className="subtle">Try another filter, or create your first confidential market.</p>
+          <p className="subtle">
+            {hasReadMismatch
+              ? "Contract reports markets, but reads returned empty/default structs. Check console logs for ABI/indexing mismatch details."
+              : "Try another filter, or create your first confidential market."}
+          </p>
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">

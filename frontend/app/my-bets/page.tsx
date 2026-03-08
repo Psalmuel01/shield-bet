@@ -4,7 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import { useAccount, useReadContract, useReadContracts } from "wagmi";
 import { MyBetRow, MyBetsTable } from "@/components/my-bets-table";
 import { shieldBetConfig } from "@/lib/contract";
+import { decodeMarketView } from "@/lib/market-contract";
 import { getLocalBetsByWallet, LocalBetRecord } from "@/lib/local-bets";
+import { logInfo, logWarn } from "@/lib/telemetry";
 
 export default function MyBetsPage() {
   const { address } = useAccount();
@@ -19,9 +21,23 @@ export default function MyBetsPage() {
     functionName: "marketCount"
   });
 
+  useEffect(() => {
+    logInfo("my-bets", "read marketCount", {
+      contract: shieldBetConfig.address,
+      marketCount: marketCount?.toString() || "0",
+      account: address || ""
+    });
+  }, [marketCount, address]);
+
   const ids = useMemo(() => {
-    if (!marketCount) return [] as bigint[];
-    return Array.from({ length: Number(marketCount) }, (_, idx) => BigInt(idx + 1));
+    if (marketCount === undefined || marketCount === null) return [] as bigint[];
+
+    const count = Number(marketCount);
+    if (!Number.isFinite(count) || count <= 0) return [] as bigint[];
+
+    const oneBased = Array.from({ length: count }, (_, idx) => BigInt(idx + 1));
+    const zeroBased = Array.from({ length: count }, (_, idx) => BigInt(idx));
+    return [...new Set([...oneBased, ...zeroBased].map((value) => value.toString()))].map((value) => BigInt(value));
   }, [marketCount]);
 
   const contracts = useMemo(() => {
@@ -53,6 +69,17 @@ export default function MyBetsPage() {
     }
   });
 
+  useEffect(() => {
+    if (!batch?.length) return;
+    logInfo("my-bets", "read markets batch", {
+      calls: batch.length,
+      statuses: batch.map((entry, idx) => ({
+        idx,
+        status: entry.status
+      }))
+    });
+  }, [batch]);
+
   const rows = useMemo(() => {
     if (!batch?.length || !address) return [] as MyBetRow[];
 
@@ -73,18 +100,23 @@ export default function MyBetsPage() {
         claimRes?.status !== "success" ||
         !claimRes.result
       ) {
+        logWarn("my-bets", "batch row read failure", {
+          marketId: marketId.toString(),
+          marketStatus: marketRes?.status,
+          hasPositionStatus: hasPositionRes?.status,
+          claimStatus: claimRes?.status
+        });
         continue;
       }
 
-      const market = marketRes.result as {
-        question: string;
-        deadline: bigint;
-        outcome: number;
-        resolved: boolean;
-        totalYes: `0x${string}`;
-        totalNo: `0x${string}`;
-        creator: `0x${string}`;
-      };
+      const market = decodeMarketView(marketRes.result);
+      if (!market) {
+        logWarn("my-bets", "unable to decode market payload", {
+          marketId: marketId.toString(),
+          raw: marketRes.result
+        });
+        continue;
+      }
 
       const claimResult = claimRes.result as readonly [bigint, boolean];
       const local = localByMarket.get(marketId.toString());
@@ -103,6 +135,19 @@ export default function MyBetsPage() {
 
     return next;
   }, [address, batch, ids, localBets]);
+
+  useEffect(() => {
+    logInfo("my-bets", "parsed rows", {
+      count: rows.length,
+      rows: rows.map((row) => ({
+        marketId: row.marketId.toString(),
+        question: row.question,
+        position: row.position,
+        status: row.status,
+        canClaim: row.canClaim
+      }))
+    });
+  }, [rows]);
 
   return (
     <section className="space-y-5">

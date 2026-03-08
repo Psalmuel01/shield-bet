@@ -1,3 +1,5 @@
+import { logError, logInfo } from "@/lib/telemetry";
+
 export interface MarketMetadataPayload {
   marketId: bigint;
   question: string;
@@ -24,6 +26,7 @@ export interface FilecoinUploadResult {
 }
 
 async function uploadToFilecoin(kind: FilecoinUploadResult["kind"], payload: Record<string, unknown>): Promise<FilecoinUploadResult> {
+  logInfo("filecoin-client", "upload request", { kind, payload });
   const response = await fetch("/api/filecoin/upload", {
     method: "POST",
     headers: {
@@ -36,7 +39,9 @@ async function uploadToFilecoin(kind: FilecoinUploadResult["kind"], payload: Rec
   });
 
   const body = (await response.json()) as Partial<FilecoinUploadResult> & { error?: string };
+  logInfo("filecoin-client", "upload response", { status: response.status, body });
   if (!response.ok) {
+    logError("filecoin-client", "upload failed", body);
     throw new Error(body.error || "Filecoin upload failed");
   }
 
@@ -44,12 +49,15 @@ async function uploadToFilecoin(kind: FilecoinUploadResult["kind"], payload: Rec
     throw new Error("Invalid Filecoin upload response");
   }
 
-  return {
+  const result = {
     cid: body.cid,
     kind: body.kind,
     provider: body.provider,
     network: body.network || "calibration"
   };
+
+  logInfo("filecoin-client", "upload parsed", result);
+  return result;
 }
 
 export async function uploadMarketMetadata(payload: MarketMetadataPayload): Promise<FilecoinUploadResult> {

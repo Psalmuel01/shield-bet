@@ -1,14 +1,17 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Share2 } from "lucide-react";
+import { decodeEventLog, parseAbiItem } from "viem";
 import { useAccount, usePublicClient, useReadContract, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
 import { shieldBetConfig } from "@/lib/contract";
 import { uploadMarketMetadata } from "@/lib/filecoin";
 import { cidToExplorer } from "@/lib/format";
+import { logError, logInfo } from "@/lib/telemetry";
 
 const categories = ["Crypto", "Politics", "Sports", "Science", "Other"];
+const marketCreatedEvent = parseAbiItem("event MarketCreated(uint256 indexed marketId, string question, uint256 deadline, address indexed creator)");
 
 export default function CreateMarketPage() {
   const { address } = useAccount();
@@ -29,6 +32,13 @@ export default function CreateMarketPage() {
     ...shieldBetConfig,
     functionName: "marketCount"
   });
+
+  useEffect(() => {
+    logInfo("create-market", "read marketCount", {
+      contract: shieldBetConfig.address,
+      marketCount: marketCount?.toString() || "0"
+    });
+  }, [marketCount]);
 
   const shareUrl = useMemo(() => {
     if (!createdMarketId) return "";
@@ -60,17 +70,45 @@ export default function CreateMarketPage() {
       setStatusMessage("Creating market...");
       setCreatedMarketId(null);
       setCid("");
+      logInfo("create-market", "submit createMarket", {
+        contract: shieldBetConfig.address,
+        question: question.trim(),
+        deadline
+      });
 
       const txHash = await writeContractAsync({
         ...shieldBetConfig,
         functionName: "createMarket",
         args: [question.trim(), BigInt(deadline)]
       });
+      logInfo("create-market", "createMarket tx submitted", { txHash });
 
       const receipt = await publicClient?.waitForTransactionReceipt({ hash: txHash });
       if (!receipt) throw new Error("Could not confirm create transaction");
+      logInfo("create-market", "createMarket tx confirmed", {
+        txHash,
+        status: receipt.status,
+        logsCount: receipt.logs.length
+      });
 
       let marketId: bigint | null = null;
+      let eventFound = false;
+      for (const log of receipt.logs) {
+        try {
+          const decoded = decodeEventLog({
+            abi: [marketCreatedEvent],
+            data: log.data,
+            topics: log.topics
+          });
+          if (typeof decoded.args.marketId === "bigint") {
+            marketId = decoded.args.marketId;
+            eventFound = true;
+            break;
+          }
+        } catch {
+          continue;
+        }
+      }
       if (!marketId) {
         const current = (await publicClient?.readContract({
           ...shieldBetConfig,
@@ -78,12 +116,24 @@ export default function CreateMarketPage() {
         })) as bigint | undefined;
         marketId = current ?? marketCount ?? null;
       }
+      logInfo("create-market", "resolved marketId", {
+        marketId: marketId?.toString() || "",
+        source: eventFound ? "event" : "marketCount"
+      });
 
       if (!marketId) {
         throw new Error("Failed to resolve created marketId");
       }
 
       setStatusMessage("Uploading metadata to Filecoin...");
+      logInfo("create-market", "upload market metadata", {
+        marketId: marketId.toString(),
+        question: question.trim(),
+        creator: address,
+        deadline,
+        category,
+        resolutionCriteria
+      });
       const uploaded = await uploadMarketMetadata({
         marketId,
         question: question.trim(),
@@ -93,20 +143,36 @@ export default function CreateMarketPage() {
         resolutionCriteria
       });
       const marketCid = uploaded.cid;
+      logInfo("create-market", "filecoin upload success", {
+        marketId: marketId.toString(),
+        cid: marketCid,
+        provider: uploaded.provider,
+        network: uploaded.network
+      });
 
       setStatusMessage("Anchoring CID on-chain...");
+      logInfo("create-market", "submit anchorMarketMetadataCID", {
+        marketId: marketId.toString(),
+        cid: marketCid
+      });
       const anchorHash = await writeContractAsync({
         ...shieldBetConfig,
         functionName: "anchorMarketMetadataCID",
         args: [marketId, marketCid]
       });
+      logInfo("create-market", "anchorMarketMetadataCID tx submitted", { anchorHash });
 
-      await publicClient?.waitForTransactionReceipt({ hash: anchorHash });
+      const anchorReceipt = await publicClient?.waitForTransactionReceipt({ hash: anchorHash });
+      logInfo("create-market", "anchorMarketMetadataCID tx confirmed", {
+        anchorHash,
+        status: anchorReceipt?.status || "unknown"
+      });
 
       setCreatedMarketId(marketId);
       setCid(marketCid);
       setStatusMessage(`Market created and metadata anchored (${uploaded.provider}/${uploaded.network}).`);
     } catch (error) {
+      logError("create-market", "create flow failed", error);
       setStatusMessage(error instanceof Error ? error.message : "Create market failed");
     }
   }

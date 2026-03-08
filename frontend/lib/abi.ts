@@ -12,19 +12,13 @@ export const shieldBetAbi = [
     stateMutability: "view",
     inputs: [{ name: "marketId", type: "uint256" }],
     outputs: [
-      {
-        name: "",
-        type: "tuple",
-        components: [
-          { name: "question", type: "string" },
-          { name: "deadline", type: "uint256" },
-          { name: "outcome", type: "uint8" },
-          { name: "resolved", type: "bool" },
-          { name: "totalYes", type: "bytes32" },
-          { name: "totalNo", type: "bytes32" },
-          { name: "creator", type: "address" }
-        ]
-      }
+      { name: "question", type: "string" },
+      { name: "deadline", type: "uint256" },
+      { name: "outcome", type: "uint8" },
+      { name: "resolved", type: "bool" },
+      { name: "totalYes", type: "bytes32" },
+      { name: "totalNo", type: "bytes32" },
+      { name: "creator", type: "address" }
     ]
   },
   {

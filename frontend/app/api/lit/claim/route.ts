@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createPublicClient, decodeEventLog, getAddress, http, isAddress, parseAbiItem } from "viem";
+import { logError, logInfo } from "@/lib/telemetry";
 
 interface ClaimRequest {
   marketId: string;
@@ -23,6 +24,7 @@ function getRpcUrl() {
 
 export async function POST(request: NextRequest) {
   const body = (await request.json()) as Partial<ClaimRequest>;
+  logInfo("claim-api", "incoming verify request", body);
 
   if (!body.marketId || !body.account || !body.txHash) {
     return NextResponse.json({ error: "Missing claim payload fields" }, { status: 400 });
@@ -46,13 +48,24 @@ export async function POST(request: NextRequest) {
   const publicClient = createPublicClient({
     transport: http(getRpcUrl())
   });
+  logInfo("claim-api", "client configured", {
+    rpcUrl: getRpcUrl()
+  });
 
   let receipt;
   try {
     receipt = await publicClient.getTransactionReceipt({
       hash: body.txHash as `0x${string}`
     });
+    logInfo("claim-api", "tx receipt loaded", {
+      txHash: body.txHash,
+      status: receipt.status,
+      logsCount: receipt.logs.length
+    });
   } catch {
+    logError("claim-api", "failed fetching receipt", {
+      txHash: body.txHash
+    });
     return NextResponse.json({ error: "Unable to fetch claim transaction receipt" }, { status: 400 });
   }
 
@@ -85,10 +98,20 @@ export async function POST(request: NextRequest) {
   }
 
   if (!matchedClaim) {
+    logError("claim-api", "no matching claim event", {
+      txHash: body.txHash,
+      expectedMarketId: expectedMarketId.toString(),
+      expectedAccount: normalizedAccount
+    });
     return NextResponse.json({ error: "No matching WinningsClaimed event found in receipt" }, { status: 400 });
   }
 
   if (expectedPayoutWei > 0n && claimedPayout !== expectedPayoutWei) {
+    logError("claim-api", "claim payout mismatch", {
+      txHash: body.txHash,
+      expectedPayoutWei: expectedPayoutWei.toString(),
+      claimedPayoutWei: claimedPayout.toString()
+    });
     return NextResponse.json({
       error: `Claim payout mismatch: expected ${expectedPayoutWei.toString()} got ${claimedPayout.toString()}`
     }, { status: 409 });
@@ -96,12 +119,14 @@ export async function POST(request: NextRequest) {
 
   const hasLitProof = Boolean(body.litActionCid && body.litResponse);
 
-  return NextResponse.json({
+  const response = {
     mode: hasLitProof ? "lit" : "verify",
     txHash: body.txHash,
     actionCid: hasLitProof ? body.litActionCid : undefined,
     plaintextPayoutWei: claimedPayout.toString(),
     litResponse: hasLitProof ? body.litResponse : undefined,
     litLogs: hasLitProof ? body.litLogs || "" : undefined
-  });
+  };
+  logInfo("claim-api", "verify response", response);
+  return NextResponse.json(response);
 }
