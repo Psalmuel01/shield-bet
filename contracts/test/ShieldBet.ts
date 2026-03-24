@@ -38,7 +38,17 @@ describe("ShieldBet", function () {
     const { shieldBet, alice } = await deployFixture();
     const deadline = BigInt((await ethers.provider.getBlock("latest"))!.timestamp + 3600);
 
-    await expect(shieldBet.connect(alice).createMarket("Will ETH be above $5k by Dec 2026?", deadline))
+    await expect(
+      shieldBet
+        .connect(alice)
+        .createMarketWithMetadata(
+          "Will ETH be above $5k by Dec 2026?",
+          deadline,
+          "Crypto",
+          "Resolves YES if ETH spot price is above $5000 at close.",
+          "Owner settlement"
+        )
+    )
       .to.emit(shieldBet, "MarketCreated")
       .withArgs(1n, "Will ETH be above $5k by Dec 2026?", deadline, alice.address);
 
@@ -46,6 +56,10 @@ describe("ShieldBet", function () {
       .to.emit(shieldBet, "MarketMetadataAnchored")
       .withArgs(1n, "bafy-market-cid");
 
+    const details = await shieldBet.getMarketDetails(1);
+    expect(details[0]).to.equal("Crypto");
+    expect(details[1]).to.equal("Resolves YES if ETH spot price is above $5000 at close.");
+    expect(details[2]).to.equal("Owner settlement");
     expect(await shieldBet.marketMetadataCID(1)).to.equal("bafy-market-cid");
   });
 

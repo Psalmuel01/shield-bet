@@ -9,6 +9,22 @@ export interface ClaimConfirmation {
   txHash: string;
   plaintextPayoutWei: string;
   actionCid?: string;
+  verifiedMarketId?: string;
+  verifiedAccount?: string;
+  verifiedOutcome?: string;
+  verifiedChecks?: string[];
+  litAttestation?: {
+    account: string;
+    marketId: string;
+    resolvedOutcome: string;
+    expectedPayoutWei: string;
+    txHash?: string;
+    verifier: "lit-action";
+    actionCid: string;
+    network: string;
+    issuedAt: string;
+    checks: string[];
+  };
 }
 
 interface ClaimFlowProps {
@@ -90,11 +106,66 @@ export function ClaimFlow({ open, onClose, payoutWei, onConfirmClaim }: ClaimFlo
 
           {(stage === "ready" || stage === "done" || stage === "submitting") && (
             <div className="surface-muted p-4">
-              <p className="text-sm text-slate-700 dark:text-slate-300">Your encrypted bet: ●●●●●● USDC</p>
+              <p className="text-sm text-slate-700 dark:text-slate-300">Your encrypted bet: ●●●●●● ETH</p>
               <p className="mt-1 text-sm text-slate-700 dark:text-slate-300">Winnings: {winnings} ETH</p>
               <p className="mt-1 text-sm font-medium text-emerald-600 dark:text-emerald-400">Profit: encrypted until claim</p>
+              {claimResult?.verifiedOutcome ? (
+                <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                  Verified outcome: {claimResult.verifiedOutcome === "1" ? "YES" : claimResult.verifiedOutcome === "2" ? "NO" : claimResult.verifiedOutcome}
+                </p>
+              ) : null}
+              {claimResult?.verifiedAccount ? (
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Verified wallet: {claimResult.verifiedAccount}</p>
+              ) : null}
             </div>
           )}
+
+          {claimResult?.litAttestation ? (
+            <div className="surface-muted p-4">
+              <p className="text-xs uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">What Lit Verified</p>
+              <div className="mt-2 space-y-1 text-sm text-slate-700 dark:text-slate-300">
+                <p>Verifier: Lit Action</p>
+                <p>Action CID: {claimResult.litAttestation.actionCid}</p>
+                <p>Network: {claimResult.litAttestation.network}</p>
+                <p>Market ID: {claimResult.litAttestation.marketId}</p>
+                <p>Wallet: {claimResult.litAttestation.account}</p>
+                <p>
+                  Outcome:{" "}
+                  {claimResult.litAttestation.resolvedOutcome === "1"
+                    ? "YES"
+                    : claimResult.litAttestation.resolvedOutcome === "2"
+                      ? "NO"
+                      : claimResult.litAttestation.resolvedOutcome}
+                </p>
+                <p>Payout: {claimResult.litAttestation.expectedPayoutWei} wei</p>
+                {claimResult.litAttestation.txHash ? <p>Tx Hash: {claimResult.litAttestation.txHash}</p> : null}
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {claimResult.litAttestation.checks.map((check) => (
+                  <span
+                    key={check}
+                    className="rounded-full bg-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                  >
+                    {check}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ) : claimResult?.verifiedChecks?.length ? (
+            <div className="surface-muted p-4">
+              <p className="text-xs uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">Verified Checks</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {claimResult.verifiedChecks.map((check) => (
+                  <span
+                    key={check}
+                    className="rounded-full bg-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                  >
+                    {check}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
           {stage === "error" && <p className="text-sm text-rose-500">{error}</p>}
 

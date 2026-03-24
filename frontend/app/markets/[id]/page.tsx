@@ -10,13 +10,14 @@ import { BetPlacement } from "@/components/bet-placement";
 import { ClaimConfirmation, ClaimFlow } from "@/components/claim-flow";
 import { EncryptedActivity } from "@/components/encrypted-activity";
 import { EncryptedBands } from "@/components/encrypted-bands";
+import { RuntimeAlerts } from "@/components/runtime-alerts";
 import { BetOutcome, encryptBetInputs } from "@/lib/encryption";
-import { uploadResolution } from "@/lib/filecoin";
 import { cidToExplorer, formatDeadline, getCountdown } from "@/lib/format";
 import { shieldBetConfig } from "@/lib/contract";
-import { decodeMarketView } from "@/lib/market-contract";
+import { decodeMarketDetails, decodeMarketView } from "@/lib/market-contract";
 import { getEncryptedBandCount, inferCategory, getMarketStatus } from "@/lib/market-ui";
 import { getLocalBet, saveLocalBet } from "@/lib/local-bets";
+import { getRuntimeDiagnostics } from "@/lib/runtime-config";
 import { logError, logInfo } from "@/lib/telemetry";
 
 export default function MarketBetPage() {
@@ -38,11 +39,12 @@ export default function MarketBetPage() {
 
   const [localPosition, setLocalPosition] = useState<"YES" | "NO" | "Encrypted">("Encrypted");
 
-  const { address } = useAccount();
+  const { address, chainId } = useAccount();
   const publicClient = usePublicClient();
   const { data: walletClient } = useWalletClient();
   const { data: balance } = useBalance({ address });
   const litActionCid = process.env.NEXT_PUBLIC_LIT_ACTION_CID;
+  const expectedChainId = Number(process.env.NEXT_PUBLIC_CHAIN_ID || 11155111);
 
   const { writeContractAsync, data: hash, isPending } = useWriteContract();
   const { isLoading: isConfirming } = useWaitForTransactionReceipt({ hash });
@@ -61,6 +63,12 @@ export default function MarketBetPage() {
   const { data: metadataCid } = useReadContract({
     ...shieldBetConfig,
     functionName: "marketMetadataCID",
+    args: [marketId]
+  });
+
+  const { data: marketDetailsData } = useReadContract({
+    ...shieldBetConfig,
+    functionName: "getMarketDetails",
     args: [marketId]
   });
 
@@ -136,6 +144,7 @@ export default function MarketBetPage() {
   if (!parsedMarket) {
     return <p className="text-sm text-rose-500">Unable to decode market payload. Check contract ABI/config.</p>;
   }
+  const parsedDetails = decodeMarketDetails(marketDetailsData);
 
   const question = parsedMarket.question;
   const deadline = parsedMarket.deadline;
@@ -143,9 +152,11 @@ export default function MarketBetPage() {
   const resolved = parsedMarket.resolved;
   const creator = parsedMarket.creator;
 
+  const diagnostics = getRuntimeDiagnostics();
+  const hasBlockingDiagnostics = diagnostics.some((diagnostic) => diagnostic.severity === "error");
   const isOwner = Boolean(address && ownerAddress && address.toLowerCase() === ownerAddress.toLowerCase());
   const marketStatus = getMarketStatus(deadline, resolved);
-  const category = inferCategory(question);
+  const category = parsedDetails?.category.trim() || inferCategory(question);
 
   const alreadyBet = Boolean(hasPosition);
   const claimPayout = claimQuote?.[0] || 0n;
@@ -154,9 +165,33 @@ export default function MarketBetPage() {
   const encryptedVolumeBands = getEncryptedBandCount(marketId, 6, 10);
   const participantBands = getEncryptedBandCount(marketId + 11n, 3, 8);
 
+  function getErrorMessage(error: unknown): string {
+    if (error instanceof Error) {
+      const maybe = error as Error & {
+        shortMessage?: string;
+        details?: string;
+        cause?: unknown;
+      };
+      if (maybe.shortMessage) return maybe.shortMessage;
+      if (maybe.details) return maybe.details;
+      if (maybe.cause instanceof Error) return maybe.cause.message;
+      return maybe.message;
+    }
+
+    return String(error);
+  }
+
   async function placeBet() {
     if (!address) {
       setStatusMessage("Connect your wallet first.");
+      return;
+    }
+    if (hasBlockingDiagnostics) {
+      setStatusMessage("Resolve the configuration errors shown above before placing a bet.");
+      return;
+    }
+    if (chainId !== expectedChainId) {
+      setStatusMessage(`Wrong network. Switch wallet to chain ID ${expectedChainId}.`);
       return;
     }
 
@@ -173,6 +208,12 @@ export default function MarketBetPage() {
       const encrypted = await encryptBetInputs(selectedOutcome, amountWei, {
         contractAddress: shieldBetConfig.address,
         userAddress: getAddress(address)
+      });
+      logInfo("market-detail", "placeBet encrypted payload", {
+        marketId: marketId.toString(),
+        encOutcome: encrypted.encOutcome,
+        encAmount: encrypted.encAmount,
+        inputProof: encrypted.inputProof
       });
 
       await writeContractAsync({
@@ -198,16 +239,31 @@ export default function MarketBetPage() {
       setStatusMessage("Bet placed confidentially. Your position is now encrypted.");
     } catch (error) {
       logError("market-detail", "placeBet failed", error);
-      const message = error instanceof Error ? error.message : "Bet transaction failed";
+      const message = getErrorMessage(error) || "Bet transaction failed";
       setStatusMessage(message);
     }
   }
 
   async function executeClaim(): Promise<ClaimConfirmation> {
     if (!address) throw new Error("Connect wallet first");
+    if (chainId !== expectedChainId) throw new Error(`Wrong network. Switch wallet to chain ID ${expectedChainId}.`);
     const normalizedAccount = getAddress(address);
 
-    let litExecution: { actionCid: string; response: unknown; logs: string } | null = null;
+    let litExecution:
+      | {
+          actionCid: string;
+          response: unknown;
+          logs: string;
+          attestation: {
+            eligible: boolean;
+            account: string;
+            marketId: string;
+            resolvedOutcome: string;
+            expectedPayoutWei: string;
+            txHash?: string;
+          };
+        }
+      | null = null;
     if (litActionCid) {
       if (!walletClient) {
         throw new Error("Wallet signer not ready for Lit action execution");
@@ -216,21 +272,24 @@ export default function MarketBetPage() {
       setStatusMessage("Running Lit Action eligibility check...");
       const { runLitClaimAction } = await import("@/lib/lit");
       logInfo("market-detail", "claim lit action start", {
-        marketId: marketId.toString(),
-        account: normalizedAccount,
-        actionCid: litActionCid,
-        expectedPayoutWei: claimPayout.toString()
-      });
+          marketId: marketId.toString(),
+          account: normalizedAccount,
+          actionCid: litActionCid,
+          resolvedOutcome: outcome.toString(),
+          expectedPayoutWei: claimPayout.toString()
+        });
       litExecution = await runLitClaimAction({
         actionCid: litActionCid,
         marketId: marketId.toString(),
         account: normalizedAccount,
+        resolvedOutcome: outcome.toString(),
         expectedPayoutWei: claimPayout.toString(),
         walletClient
       });
       logInfo("market-detail", "claim lit action complete", {
         marketId: marketId.toString(),
         actionCid: litExecution.actionCid,
+        litAttestation: litExecution.attestation,
         litLogs: litExecution.logs
       });
     }
@@ -274,21 +333,21 @@ export default function MarketBetPage() {
         txHash,
         expectedPayoutWei: claimPayout.toString(),
         litActionCid: litExecution?.actionCid || "",
+        resolvedOutcome: outcome.toString(),
         litResponse: litExecution?.response ?? null,
         litLogs: litExecution?.logs || ""
       })
     });
 
-    const verifyBody = (await verifyResponse.json()) as {
-      error?: string;
-      mode: "verify" | "lit";
-      txHash: string;
-      plaintextPayoutWei: string;
-      actionCid?: string;
-    };
+    const verifyBody = (await verifyResponse.json()) as
+      | ({ error?: string } & ClaimConfirmation)
+      | { error?: string };
 
     if (!verifyResponse.ok) {
       throw new Error(verifyBody.error || "Claim verification failed");
+    }
+    if (!("txHash" in verifyBody) || !("plaintextPayoutWei" in verifyBody) || !("mode" in verifyBody)) {
+      throw new Error("Claim verification response was incomplete");
     }
     logInfo("market-detail", "claim verification response", verifyBody);
 
@@ -298,6 +357,9 @@ export default function MarketBetPage() {
 
   async function resolveMarket() {
     try {
+      if (chainId !== expectedChainId) {
+        throw new Error(`Wrong network. Switch wallet to chain ID ${expectedChainId}.`);
+      }
       setAdminMessage(null);
       setAdminMessage("Submitting market resolution...");
       logInfo("market-detail", "resolve submit tx", {
@@ -320,44 +382,7 @@ export default function MarketBetPage() {
         status: resolveReceipt.status
       });
 
-      setAdminMessage("Uploading resolution artifact to Filecoin...");
-      logInfo("market-detail", "upload resolution artifact", {
-        marketId: marketId.toString(),
-        outcome: adminResolveOutcome,
-        resolver: address || "",
-        txHash: resolveHash
-      });
-      const upload = await uploadResolution({
-        marketId,
-        outcome: adminResolveOutcome,
-        resolver: address || "",
-        timestamp: Math.floor(Date.now() / 1000),
-        txHash: resolveHash,
-        question
-      });
-      logInfo("market-detail", "resolution upload success", upload);
-
-      setAdminMessage("Anchoring resolution CID on-chain...");
-      logInfo("market-detail", "submit anchorResolutionCID tx", {
-        marketId: marketId.toString(),
-        cid: upload.cid
-      });
-      const anchorHash = await writeContractAsync({
-        ...shieldBetConfig,
-        functionName: "anchorResolutionCID",
-        args: [marketId, upload.cid]
-      });
-      logInfo("market-detail", "anchorResolutionCID tx submitted", { anchorHash });
-      const anchorReceipt = await publicClient?.waitForTransactionReceipt({ hash: anchorHash });
-      if (!anchorReceipt || anchorReceipt.status !== "success") {
-        throw new Error("Resolution CID anchoring transaction failed");
-      }
-      logInfo("market-detail", "anchorResolutionCID tx confirmed", {
-        anchorHash,
-        status: anchorReceipt.status
-      });
-
-      setAdminMessage(`Market resolved and CID anchored (${upload.provider}/${upload.network}).`);
+      setAdminMessage("Market resolved on-chain.");
     } catch (error) {
       logError("market-detail", "resolve flow failed", error);
       const message = error instanceof Error ? error.message : "Failed to resolve market";
@@ -372,6 +397,9 @@ export default function MarketBetPage() {
     }
 
     try {
+      if (chainId !== expectedChainId) {
+        throw new Error(`Wrong network. Switch wallet to chain ID ${expectedChainId}.`);
+      }
       setAdminMessage(null);
       const payoutWei = parseEther(adminPayout || "0");
       logInfo("market-detail", "assign payout submit tx", {
@@ -398,6 +426,8 @@ export default function MarketBetPage() {
 
   return (
     <section className="space-y-5">
+      <RuntimeAlerts diagnostics={diagnostics} />
+
       <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
         <Link href="/markets" className="underline underline-offset-2">
           Markets
@@ -431,8 +461,12 @@ export default function MarketBetPage() {
               </p>
               <details className="surface-muted mt-2 p-3">
                 <summary className="cursor-pointer text-sm font-semibold text-slate-900 dark:text-slate-100">Resolution criteria</summary>
-                <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">This market resolves to YES if the stated condition is true at close.</p>
-                <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Resolution source: Admin oracle.</p>
+                <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
+                  {parsedDetails?.resolutionCriteria.trim() || "No explicit resolution criteria has been stored for this market yet."}
+                </p>
+                <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+                  Resolution source: {parsedDetails?.resolutionSource.trim() || "contract owner transaction"}
+                </p>
               </details>
             </div>
           </div>
@@ -534,21 +568,23 @@ export default function MarketBetPage() {
 
         <aside className="space-y-5 lg:col-span-2">
           <div className="surface p-4">
-            <h3 className="section-title text-base">Market Stats (Encrypted)</h3>
+            <h3 className="section-title text-base">Market Stats (Privacy Mode)</h3>
             <div className="mt-3 space-y-3 text-sm">
               <div className="surface-muted flex items-center justify-between px-3 py-2">
-                <span>Total encrypted volume</span>
+                <span>Activity visibility</span>
                 <span className="flex items-center gap-2 font-mono-ui">
-                  <EncryptedBands count={encryptedVolumeBands} /> USDC
+                  <EncryptedBands count={encryptedVolumeBands} /> ETH
                 </span>
               </div>
               <div className="surface-muted flex items-center justify-between px-3 py-2">
-                <span>Unique participants</span>
+                <span>Participation visibility</span>
                 <span className="flex items-center gap-2 font-mono-ui">
                   <EncryptedBands count={participantBands} />
                 </span>
               </div>
-              <p className="text-xs text-slate-500 dark:text-slate-400">Statistics are confidential until market closes.</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                v1 shows confidentiality bands, not exact public totals or participant counts.
+              </p>
             </div>
           </div>
 

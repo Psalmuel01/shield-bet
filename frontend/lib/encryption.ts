@@ -1,4 +1,5 @@
 import { Address, bytesToHex, getAddress } from "viem";
+import { logInfo } from "@/lib/telemetry";
 
 export type BetOutcome = 1 | 2;
 
@@ -18,8 +19,12 @@ type FhevmInstance = Awaited<ReturnType<FhevmWebModule["createInstance"]>>;
 
 const MAX_UINT64 = (1n << 64n) - 1n;
 let fhevmInstancePromise: Promise<FhevmInstance> | null = null;
+let fhevmSdkInitPromise: Promise<void> | null = null;
 
 function getCustomFhevmConfig(chainId: number, network: string) {
+  const useCustom = process.env.NEXT_PUBLIC_FHEVM_USE_CUSTOM === "true";
+  if (!useCustom) return null;
+
   const acl = process.env.NEXT_PUBLIC_FHEVM_ACL_CONTRACT;
   const kms = process.env.NEXT_PUBLIC_FHEVM_KMS_CONTRACT;
   const inputVerifier = process.env.NEXT_PUBLIC_FHEVM_INPUT_VERIFIER_CONTRACT;
@@ -51,6 +56,17 @@ async function getFhevmInstance(): Promise<FhevmInstance> {
 
   fhevmInstancePromise = (async () => {
     const sdk = await import("@zama-fhe/relayer-sdk/web");
+    if (!fhevmSdkInitPromise) {
+      fhevmSdkInitPromise = (async () => {
+        logInfo("encryption", "initializing FHEVM SDK wasm modules");
+        await sdk.initSDK();
+        logInfo("encryption", "FHEVM SDK wasm modules ready");
+      })().catch((error) => {
+        fhevmSdkInitPromise = null;
+        throw error;
+      });
+    }
+    await fhevmSdkInitPromise;
 
     const chainId = Number(process.env.NEXT_PUBLIC_CHAIN_ID || 11155111);
     const network = process.env.NEXT_PUBLIC_CHAIN_RPC_URL;
@@ -62,10 +78,15 @@ async function getFhevmInstance(): Promise<FhevmInstance> {
     const customConfig = getCustomFhevmConfig(chainId, network);
 
     if (customConfig) {
+      logInfo("encryption", "using custom FHEVM config", {
+        chainId,
+        relayerUrl: customConfig.relayerUrl
+      });
       return sdk.createInstance(customConfig);
     }
 
     if (chainId === 11155111) {
+      logInfo("encryption", "using Sepolia FHEVM defaults", { chainId, network });
       return sdk.createInstance({
         ...sdk.SepoliaConfig,
         network
@@ -73,6 +94,7 @@ async function getFhevmInstance(): Promise<FhevmInstance> {
     }
 
     if (chainId === 1) {
+      logInfo("encryption", "using Mainnet FHEVM defaults", { chainId, network });
       return sdk.createInstance({
         ...sdk.MainnetConfig,
         network
@@ -82,7 +104,10 @@ async function getFhevmInstance(): Promise<FhevmInstance> {
     throw new Error(
       "Unsupported chain for default FHEVM config. Set NEXT_PUBLIC_FHEVM_* env vars for custom relayer setup."
     );
-  })();
+  })().catch((error) => {
+    fhevmInstancePromise = null;
+    throw error;
+  });
 
   return fhevmInstancePromise;
 }

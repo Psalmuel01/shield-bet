@@ -10,15 +10,31 @@ export interface LitClaimExecutionParams {
   actionCid: string;
   marketId: string;
   account: `0x${string}`;
+  resolvedOutcome: string;
   expectedPayoutWei: string;
   txHash?: string;
   walletClient: WalletClient;
+}
+
+export interface LitClaimAttestation {
+  eligible: boolean;
+  account: string;
+  marketId: string;
+  resolvedOutcome: string;
+  expectedPayoutWei: string;
+  txHash?: string;
+  verifier: "lit-action";
+  actionCid: string;
+  network: string;
+  issuedAt: string;
+  checks: string[];
 }
 
 export interface LitClaimExecutionResult {
   actionCid: string;
   response: unknown;
   logs: string;
+  attestation: LitClaimAttestation;
 }
 
 type LitNetworkName =
@@ -80,6 +96,105 @@ function normalizeLitLogs(logs: unknown): string {
   }
 }
 
+function normalizeAttestationValue(value: unknown): string | undefined {
+  if (value == null) return undefined;
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "bigint" || typeof value === "boolean") return String(value);
+  return undefined;
+}
+
+function normalizeChecks(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+    .filter((entry) => entry.length > 0);
+}
+
+function buildLitAttestation(params: LitClaimExecutionParams, response: unknown): LitClaimAttestation {
+  const defaultChecks = [
+    "wallet matches claim request",
+    "market id matches claim request",
+    "resolved outcome matches current market",
+    "expected payout matches current claim quote"
+  ];
+
+  if (typeof response === "boolean") {
+    if (!response) {
+      throw new Error("Lit Action marked this claim as ineligible.");
+    }
+
+    return {
+      eligible: true,
+      account: params.account,
+      marketId: params.marketId,
+      resolvedOutcome: params.resolvedOutcome,
+      expectedPayoutWei: params.expectedPayoutWei,
+      txHash: params.txHash,
+      verifier: "lit-action",
+      actionCid: params.actionCid,
+      network: resolveLitNetworkConfig().name,
+      issuedAt: new Date().toISOString(),
+      checks: defaultChecks
+    };
+  }
+
+  if (!response || typeof response !== "object") {
+    throw new Error("Lit Action returned no usable attestation payload.");
+  }
+
+  const root = response as Record<string, unknown>;
+  const record =
+    root.attestation && typeof root.attestation === "object" ? (root.attestation as Record<string, unknown>) : root;
+  const eligibleFlag = record.eligible ?? record.ok ?? record.allowed ?? record.approved;
+  if (eligibleFlag === false) {
+    throw new Error("Lit Action rejected this claim.");
+  }
+
+  const attestedAccount = normalizeAttestationValue(record.account) || params.account;
+  const attestedMarketId = normalizeAttestationValue(record.marketId) || params.marketId;
+  const attestedOutcome = normalizeAttestationValue(record.resolvedOutcome) || params.resolvedOutcome;
+  const attestedPayout = normalizeAttestationValue(record.expectedPayoutWei) || params.expectedPayoutWei;
+  const attestedTxHash = normalizeAttestationValue(record.txHash) || params.txHash;
+
+  if (attestedAccount.toLowerCase() !== params.account.toLowerCase()) {
+    throw new Error("Lit attestation account does not match the connected wallet.");
+  }
+
+  if (attestedMarketId !== params.marketId) {
+    throw new Error("Lit attestation marketId does not match this claim.");
+  }
+
+  if (attestedOutcome !== params.resolvedOutcome) {
+    throw new Error("Lit attestation resolved outcome does not match the market outcome.");
+  }
+
+  if (attestedPayout !== params.expectedPayoutWei) {
+    throw new Error("Lit attestation expected payout does not match the claim quote.");
+  }
+
+  if (params.txHash && attestedTxHash && attestedTxHash !== params.txHash) {
+    throw new Error("Lit attestation txHash does not match this claim transaction.");
+  }
+
+  const issuedAt = normalizeAttestationValue(record.issuedAt) || new Date().toISOString();
+  const network = normalizeAttestationValue(record.network) || resolveLitNetworkConfig().name;
+  const checks = normalizeChecks(record.checks);
+
+  return {
+    eligible: true,
+    account: attestedAccount,
+    marketId: attestedMarketId,
+    resolvedOutcome: attestedOutcome,
+    expectedPayoutWei: attestedPayout,
+    txHash: attestedTxHash,
+    verifier: "lit-action",
+    actionCid: params.actionCid,
+    network,
+    issuedAt,
+    checks: checks.length ? checks : defaultChecks
+  };
+}
+
 export async function runLitClaimAction(params: LitClaimExecutionParams): Promise<LitClaimExecutionResult> {
   if (!params.walletClient.account?.address) {
     throw new Error("Wallet client is not connected");
@@ -106,7 +221,7 @@ export async function runLitClaimAction(params: LitClaimExecutionParams): Promis
       authConfig: {
         domain: typeof window !== "undefined" ? window.location.host : "shieldbet.app",
         statement: "Authorize ShieldBet confidential claim verification.",
-      expiration: new Date(Date.now() + 1000 * 60 * 10).toISOString(),
+        expiration: new Date(Date.now() + 1000 * 60 * 10).toISOString(),
         resources: [
           {
             ability: "lit-action-execution",
@@ -122,15 +237,19 @@ export async function runLitClaimAction(params: LitClaimExecutionParams): Promis
       jsParams: {
         marketId: params.marketId,
         account: params.account,
+        resolvedOutcome: params.resolvedOutcome,
         expectedPayoutWei: params.expectedPayoutWei,
         txHash: params.txHash || ""
       }
     });
 
+    const attestation = buildLitAttestation(params, execution?.response);
+
     return {
       actionCid: params.actionCid,
       response: execution?.response ?? null,
-      logs: normalizeLitLogs(execution?.logs)
+      logs: normalizeLitLogs(execution?.logs),
+      attestation
     };
   } finally {
     litClient.disconnect();

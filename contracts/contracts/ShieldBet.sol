@@ -16,9 +16,16 @@ contract ShieldBet is ZamaEthereumConfig, Ownable {
         address creator;
     }
 
+    struct MarketDetails {
+        string category;
+        string resolutionCriteria;
+        string resolutionSource;
+    }
+
     uint256 public marketCount;
 
     mapping(uint256 => Market) public markets;
+    mapping(uint256 => MarketDetails) private marketDetails;
     mapping(uint256 => mapping(address => euint64)) private betAmounts;
     mapping(uint256 => mapping(address => euint8)) private betOutcomes;
     mapping(uint256 => mapping(address => bool)) public hasClaimed;
@@ -53,6 +60,34 @@ contract ShieldBet is ZamaEthereumConfig, Ownable {
     constructor() Ownable(msg.sender) {}
 
     function createMarket(string calldata question, uint256 deadline) external returns (uint256 marketId) {
+        return _createMarket(question, deadline, "", "", "");
+    }
+
+    function createMarketWithMetadata(
+        string calldata question,
+        uint256 deadline,
+        string calldata category,
+        string calldata resolutionCriteria,
+        string calldata resolutionSource
+    ) external returns (uint256 marketId) {
+        return _createMarket(question, deadline, category, resolutionCriteria, resolutionSource);
+    }
+
+    function getMarketDetails(
+        uint256 marketId
+    ) external view returns (string memory category, string memory resolutionCriteria, string memory resolutionSource) {
+        _requireMarket(marketId);
+        MarketDetails storage details = marketDetails[marketId];
+        return (details.category, details.resolutionCriteria, details.resolutionSource);
+    }
+
+    function _createMarket(
+        string memory question,
+        uint256 deadline,
+        string memory category,
+        string memory resolutionCriteria,
+        string memory resolutionSource
+    ) internal returns (uint256 marketId) {
         if (deadline <= block.timestamp) revert DeadlineMustBeFuture();
 
         marketId = ++marketCount;
@@ -64,6 +99,11 @@ contract ShieldBet is ZamaEthereumConfig, Ownable {
             totalYes: FHE.asEuint64(0),
             totalNo: FHE.asEuint64(0),
             creator: msg.sender
+        });
+        marketDetails[marketId] = MarketDetails({
+            category: category,
+            resolutionCriteria: resolutionCriteria,
+            resolutionSource: resolutionSource
         });
 
         // Contract must retain access to encrypted accumulators across txs.

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { Lock, ShieldAlert } from "lucide-react";
 import { useMemo } from "react";
 import { cidToExplorer, formatDeadline, getCountdown } from "@/lib/format";
-import { getEncryptedBandCount, getMarketStatus, inferCategory, renderEncryptedDots } from "@/lib/market-ui";
+import { getEncryptedBandCount, getMarketStatus, MarketCategory, renderEncryptedDots } from "@/lib/market-ui";
 
 interface MarketCardProps {
   marketId: bigint;
@@ -12,6 +12,7 @@ interface MarketCardProps {
   deadline: bigint;
   outcome: number;
   resolved: boolean;
+  category: MarketCategory;
   metadataCid: string;
   resolutionCid: string;
 }
@@ -30,9 +31,8 @@ const statusStyles: Record<string, string> = {
   Resolved: "bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300"
 };
 
-export function MarketCard({ marketId, question, deadline, outcome, resolved, metadataCid, resolutionCid }: MarketCardProps) {
+export function MarketCard({ marketId, question, deadline, outcome, resolved, category, metadataCid, resolutionCid }: MarketCardProps) {
   const status = getMarketStatus(deadline, resolved);
-  const category = inferCategory(question);
 
   const encryptedBandCount = useMemo(() => getEncryptedBandCount(marketId), [marketId]);
   const encryptedBandText = renderEncryptedDots(encryptedBandCount);
@@ -44,7 +44,7 @@ export function MarketCard({ marketId, question, deadline, outcome, resolved, me
         <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusStyles[status]}`}>{status}</span>
       </div>
 
-      <Link href={`/market/${marketId}`} className="block">
+      <Link href={`/markets/${marketId}`} className="block">
         <h2 className="line-clamp-2 text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-100">{question}</h2>
       </Link>
 
@@ -60,7 +60,7 @@ export function MarketCard({ marketId, question, deadline, outcome, resolved, me
         </div>
         <p className="font-mono-ui mt-1 text-sm text-indigo-700 dark:text-indigo-300">{encryptedBandText} encrypted</p>
         <p className="mt-2 text-xs text-indigo-700/80 dark:text-indigo-300/80" title="Bet amounts are fully encrypted. No one can see positions until settlement.">
-          Bet amounts are fully encrypted. No one can see positions until settlement.
+          Privacy band only. It does not represent exact public volume.
         </p>
       </div>
 
@@ -71,18 +71,31 @@ export function MarketCard({ marketId, question, deadline, outcome, resolved, me
       )}
 
       <div className="mt-4 grid grid-cols-2 gap-2">
-        <Link
-          href={`/market/${marketId}?side=yes`}
-          className="rounded-lg bg-emerald-500 px-3 py-2 text-center text-sm font-semibold text-white transition hover:scale-[1.02] hover:bg-emerald-600"
-        >
-          YES
-        </Link>
-        <Link
-          href={`/market/${marketId}?side=no`}
-          className="rounded-lg bg-rose-500 px-3 py-2 text-center text-sm font-semibold text-white transition hover:scale-[1.02] hover:bg-rose-600"
-        >
-          NO
-        </Link>
+        {resolved ? (
+          <>
+            <div className="rounded-lg bg-slate-200 px-3 py-2 text-center text-sm font-semibold text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+              YES
+            </div>
+            <div className="rounded-lg bg-slate-200 px-3 py-2 text-center text-sm font-semibold text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+              NO
+            </div>
+          </>
+        ) : (
+          <>
+            <Link
+              href={`/markets/${marketId}?side=yes`}
+              className="rounded-lg bg-emerald-500 px-3 py-2 text-center text-sm font-semibold text-white transition hover:scale-[1.02] hover:bg-emerald-600"
+            >
+              YES
+            </Link>
+            <Link
+              href={`/markets/${marketId}?side=no`}
+              className="rounded-lg bg-rose-500 px-3 py-2 text-center text-sm font-semibold text-white transition hover:scale-[1.02] hover:bg-rose-600"
+            >
+              NO
+            </Link>
+          </>
+        )}
       </div>
 
       <div className="mt-4 flex flex-wrap gap-3 text-xs font-medium text-slate-500 dark:text-slate-400">

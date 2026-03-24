@@ -58,7 +58,7 @@ export function BetPlacement({
       <p className="mb-2 text-sm text-slate-700 dark:text-slate-300">Selected: {selectedOutcome === 1 ? "YES" : "NO"}</p>
 
       <label htmlFor="amount" className="mb-2 block text-sm font-medium text-slate-800 dark:text-slate-200">
-        Amount (USDC)
+        Amount (ETH)
       </label>
       <div className="mb-3 flex items-center gap-2">
         <input

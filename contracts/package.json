@@ -6,7 +6,8 @@
     "clean": "hardhat clean",
     "compile": "hardhat compile",
     "test": "hardhat test",
-    "deploy:zama": "hardhat run scripts/deploy.ts --network zama_testnet"
+    "deploy:zama": "hardhat run scripts/deploy.ts --network sepolia",
+    "e2e:sepolia": "hardhat run scripts/e2e-demo.ts --network sepolia"
   },
   "devDependencies": {
     "@fhevm/hardhat-plugin": "^0.4.2",

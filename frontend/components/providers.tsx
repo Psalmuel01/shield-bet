@@ -2,18 +2,19 @@
 
 import "@rainbow-me/rainbowkit/styles.css";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { RainbowKitProvider, darkTheme, getDefaultConfig, lightTheme } from "@rainbow-me/rainbowkit";
+import { RainbowKitProvider, darkTheme, lightTheme } from "@rainbow-me/rainbowkit";
 import { ThemeProvider, useTheme } from "next-themes";
-import { WagmiProvider } from "wagmi";
+import { createConfig, http, WagmiProvider } from "wagmi";
+import { injected } from "wagmi/connectors";
 import { zamaChain } from "@/lib/chain";
 import { useMemo, useState } from "react";
 
-const walletConnectProjectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "demo-project-id";
-
-const wagmiConfig = getDefaultConfig({
-  appName: "ShieldBet",
-  projectId: walletConnectProjectId,
+const wagmiConfig = createConfig({
   chains: [zamaChain],
+  connectors: [injected()],
+  transports: {
+    [zamaChain.id]: http(zamaChain.rpcUrls.default.http[0])
+  },
   ssr: true
 });
 

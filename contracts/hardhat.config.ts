@@ -17,8 +17,9 @@ const config: HardhatUserConfig = {
   },
   networks: {
     hardhat: {},
-    zama_testnet: {
+    sepolia: {
       url: process.env.ZAMA_RPC_URL || "",
+      chainId: 11155111,
       accounts: process.env.DEPLOYER_PRIVATE_KEY ? [process.env.DEPLOYER_PRIVATE_KEY] : []
     }
   }

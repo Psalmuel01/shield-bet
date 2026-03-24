@@ -1,15 +1,32 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createPublicClient, decodeEventLog, getAddress, http, isAddress, parseAbiItem } from "viem";
+import { shieldBetAbi } from "@/lib/abi";
+import { shieldBetConfig } from "@/lib/contract";
 import { logError, logInfo } from "@/lib/telemetry";
 
 interface ClaimRequest {
   marketId: string;
   account: string;
   txHash: string;
+  resolvedOutcome?: string;
   expectedPayoutWei: string;
   litActionCid?: string;
   litResponse?: unknown;
   litLogs?: string;
+}
+
+interface LitAttestationPayload {
+  eligible?: unknown;
+  account?: unknown;
+  marketId?: unknown;
+  resolvedOutcome?: unknown;
+  expectedPayoutWei?: unknown;
+  txHash?: unknown;
+  verifier?: unknown;
+  actionCid?: unknown;
+  network?: unknown;
+  issuedAt?: unknown;
+  checks?: unknown;
 }
 
 export const runtime = "nodejs";
@@ -20,6 +37,39 @@ const winningsClaimedEvent = parseAbiItem(
 
 function getRpcUrl() {
   return process.env.NEXT_PUBLIC_CHAIN_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com";
+}
+
+function asString(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "bigint" || typeof value === "boolean") return String(value);
+  return undefined;
+}
+
+function parseLitAttestation(body: Partial<ClaimRequest>) {
+  if (!body.litActionCid || !body.litResponse || typeof body.litResponse !== "object") return null;
+
+  const root = body.litResponse as Record<string, unknown>;
+  const candidate =
+    root.attestation && typeof root.attestation === "object"
+      ? (root.attestation as LitAttestationPayload)
+      : (root as LitAttestationPayload);
+
+  const checks = Array.isArray(candidate.checks)
+    ? candidate.checks.map((entry) => asString(entry)).filter((entry): entry is string => Boolean(entry))
+    : [];
+
+  return {
+    account: asString(candidate.account),
+    marketId: asString(candidate.marketId),
+    resolvedOutcome: asString(candidate.resolvedOutcome),
+    expectedPayoutWei: asString(candidate.expectedPayoutWei),
+    txHash: asString(candidate.txHash),
+    verifier: asString(candidate.verifier) || "lit-action",
+    actionCid: asString(candidate.actionCid) || body.litActionCid,
+    network: asString(candidate.network) || (process.env.NEXT_PUBLIC_LIT_NETWORK || "naga-test"),
+    issuedAt: asString(candidate.issuedAt) || new Date().toISOString(),
+    checks
+  };
 }
 
 export async function POST(request: NextRequest) {
@@ -36,9 +86,11 @@ export async function POST(request: NextRequest) {
 
   let expectedMarketId: bigint;
   let expectedPayoutWei: bigint;
+  let expectedResolvedOutcome = 0;
   try {
     expectedMarketId = BigInt(body.marketId);
     expectedPayoutWei = body.expectedPayoutWei ? BigInt(body.expectedPayoutWei) : 0n;
+    expectedResolvedOutcome = body.resolvedOutcome ? Number(body.resolvedOutcome) : 0;
   } catch {
     return NextResponse.json({ error: "Invalid numeric claim payload values" }, { status: 400 });
   }
@@ -51,6 +103,42 @@ export async function POST(request: NextRequest) {
   logInfo("claim-api", "client configured", {
     rpcUrl: getRpcUrl()
   });
+
+  if (shieldBetConfig.address === "0x0000000000000000000000000000000000000000") {
+    return NextResponse.json({ error: "NEXT_PUBLIC_SHIELDBET_ADDRESS is not configured" }, { status: 500 });
+  }
+
+  let marketRecord;
+  try {
+    marketRecord = await publicClient.readContract({
+      address: shieldBetConfig.address,
+      abi: shieldBetAbi,
+      functionName: "markets",
+      args: [expectedMarketId]
+    });
+  } catch (error) {
+    logError("claim-api", "failed reading market state", {
+      marketId: expectedMarketId.toString(),
+      error: error instanceof Error ? error.message : String(error)
+    });
+    return NextResponse.json({ error: "Unable to read market state for verification" }, { status: 400 });
+  }
+
+  const onchainOutcome = Array.isArray(marketRecord) ? Number(marketRecord[2]) : Number((marketRecord as { outcome?: unknown }).outcome || 0);
+  const onchainResolved = Array.isArray(marketRecord) ? Boolean(marketRecord[3]) : Boolean((marketRecord as { resolved?: unknown }).resolved);
+
+  if (!onchainResolved) {
+    return NextResponse.json({ error: "Market is not resolved on-chain" }, { status: 409 });
+  }
+
+  if (expectedResolvedOutcome > 0 && onchainOutcome !== expectedResolvedOutcome) {
+    return NextResponse.json(
+      {
+        error: `Resolved outcome mismatch: expected ${expectedResolvedOutcome} got ${onchainOutcome}`
+      },
+      { status: 409 }
+    );
+  }
 
   let receipt;
   try {
@@ -118,12 +206,24 @@ export async function POST(request: NextRequest) {
   }
 
   const hasLitProof = Boolean(body.litActionCid && body.litResponse);
+  const litAttestation = parseLitAttestation(body);
+  const verifiedChecks = [
+    "market is resolved on-chain",
+    "claim event matches wallet and market",
+    "claimed payout matches quote",
+    ...(hasLitProof ? ["Lit Action attestation attached"] : [])
+  ];
 
   const response = {
     mode: hasLitProof ? "lit" : "verify",
     txHash: body.txHash,
     actionCid: hasLitProof ? body.litActionCid : undefined,
     plaintextPayoutWei: claimedPayout.toString(),
+    verifiedMarketId: expectedMarketId.toString(),
+    verifiedAccount: normalizedAccount,
+    verifiedOutcome: onchainOutcome.toString(),
+    verifiedChecks,
+    litAttestation: hasLitProof && litAttestation ? litAttestation : undefined,
     litResponse: hasLitProof ? body.litResponse : undefined,
     litLogs: hasLitProof ? body.litLogs || "" : undefined
   };

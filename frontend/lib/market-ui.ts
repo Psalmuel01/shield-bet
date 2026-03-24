@@ -1,6 +1,8 @@
 export type MarketCategory = "Crypto" | "Politics" | "Sports" | "Science" | "Other";
 export type MarketStatus = "Open" | "Closing Soon" | "Resolved";
 
+const MARKET_CATEGORIES: MarketCategory[] = ["Crypto", "Politics", "Sports", "Science", "Other"];
+
 const CATEGORY_KEYWORDS: Record<Exclude<MarketCategory, "Other">, string[]> = {
   Crypto: ["eth", "btc", "bitcoin", "sol", "crypto", "token", "defi", "ethereum", "market cap"],
   Politics: ["election", "president", "senate", "congress", "vote", "policy", "campaign"],
@@ -16,6 +18,11 @@ export function inferCategory(question: string): MarketCategory {
   }
 
   return "Other";
+}
+
+export function coerceMarketCategory(value: string | undefined | null): MarketCategory {
+  if (!value) return "Other";
+  return MARKET_CATEGORIES.includes(value as MarketCategory) ? (value as MarketCategory) : "Other";
 }
 
 export function getMarketStatus(deadline: bigint, resolved: boolean): MarketStatus {

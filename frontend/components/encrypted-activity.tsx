@@ -7,19 +7,8 @@ interface EncryptedActivityProps {
   marketId: bigint;
 }
 
-function relativeStamp(minutesAgo: number) {
-  if (minutesAgo < 60) return `${minutesAgo}m ago`;
-  const hours = Math.floor(minutesAgo / 60);
-  return `${hours}h ago`;
-}
-
 export function EncryptedActivity({ marketId }: EncryptedActivityProps) {
-  const seed = Number(marketId % 97n);
-  const entries = Array.from({ length: 7 }, (_, i) => {
-    const minutesAgo = (i + 1) * (seed % 11 + 7);
-    const bands = ((seed + i * 3) % 10) + 1;
-    return { id: `${marketId}-${i}`, minutesAgo, bands };
-  });
+  const bands = Number((marketId % 8n) + 3n);
 
   return (
     <div className="surface p-4">
@@ -30,19 +19,15 @@ export function EncryptedActivity({ marketId }: EncryptedActivityProps) {
         </span>
       </div>
 
-      <div className="space-y-3">
-        {entries.map((entry) => (
-          <div key={entry.id} className="surface-muted flex items-center justify-between px-3 py-2">
-            <div>
-              <p className="text-sm font-medium text-slate-900 dark:text-slate-100">Encrypted position placed</p>
-              <p className="subtle">{relativeStamp(entry.minutesAgo)}</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <EncryptedBands count={entry.bands} />
-              <Lock className="h-4 w-4 text-indigo-500" />
-            </div>
-          </div>
-        ))}
+      <div className="surface-muted flex items-center justify-between px-3 py-2">
+        <div>
+          <p className="text-sm font-medium text-slate-900 dark:text-slate-100">Public activity is hidden</p>
+          <p className="subtle">v1 shows privacy bands only. Exact timing and sizes remain hidden until settlement.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <EncryptedBands count={bands} />
+          <Lock className="h-4 w-4 text-indigo-500" />
+        </div>
       </div>
 
       <p className="mt-4 text-xs text-slate-500 dark:text-slate-400">All activity is confidential until settlement.</p>

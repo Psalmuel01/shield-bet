@@ -8,3 +8,4 @@ contracts/fhevmTemp
 contracts/typechain-types
 frontend/.next
 frontend/node_modules
+frontend/tsconfig.tsbuildinfo

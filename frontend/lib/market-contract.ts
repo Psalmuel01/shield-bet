@@ -8,6 +8,12 @@ export interface DecodedMarketView {
   creator: `0x${string}`;
 }
 
+export interface DecodedMarketDetails {
+  category: string;
+  resolutionCriteria: string;
+  resolutionSource: string;
+}
+
 function isHex32(value: unknown): value is `0x${string}` {
   return typeof value === "string" && value.startsWith("0x");
 }
@@ -55,6 +61,39 @@ export function decodeMarketView(result: unknown): DecodedMarketView | null {
       isAddress(market.creator)
     ) {
       return market as DecodedMarketView;
+    }
+  }
+
+  return null;
+}
+
+export function decodeMarketDetails(result: unknown): DecodedMarketDetails | null {
+  if (!result) return null;
+
+  const asArray = Array.isArray(result) ? result : null;
+  if (asArray && asArray.length >= 3) {
+    const [category, resolutionCriteria, resolutionSource] = asArray as unknown[];
+    if (
+      typeof category === "string" &&
+      typeof resolutionCriteria === "string" &&
+      typeof resolutionSource === "string"
+    ) {
+      return {
+        category,
+        resolutionCriteria,
+        resolutionSource
+      };
+    }
+  }
+
+  if (typeof result === "object") {
+    const details = result as Partial<DecodedMarketDetails>;
+    if (
+      typeof details.category === "string" &&
+      typeof details.resolutionCriteria === "string" &&
+      typeof details.resolutionSource === "string"
+    ) {
+      return details as DecodedMarketDetails;
     }
   }
 

@@ -16,6 +16,13 @@ const nextConfig: NextConfig = {
       "@react-native-async-storage/async-storage": false,
       "pino-pretty": false
     };
+
+    config.ignoreWarnings = [
+      ...(config.ignoreWarnings || []),
+      {
+        message: /Circular dependency between chunks with runtime/
+      }
+    ];
     return config;
   }
 };

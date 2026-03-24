@@ -156,6 +156,9 @@ export default function MyBetsPage() {
         <p className="mt-3 max-w-2xl text-sm text-slate-600 dark:text-slate-300 md:text-base">
           Portfolio view of your confidential positions. Bet sizes remain encrypted until claim.
         </p>
+        <p className="mt-2 max-w-2xl text-xs text-slate-500 dark:text-slate-400">
+          Position side is shown when this browser has a local record of your bet; otherwise it remains encrypted.
+        </p>
       </div>
 
       {!address ? (

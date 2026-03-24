@@ -4,8 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useAccount, useReadContract, useReadContracts } from "wagmi";
 import { MarketCard } from "@/components/market-card";
 import { shieldBetConfig } from "@/lib/contract";
-import { decodeMarketView } from "@/lib/market-contract";
-import { getEncryptedBandCount, inferCategory, MarketCategory } from "@/lib/market-ui";
+import { decodeMarketDetails, decodeMarketView } from "@/lib/market-contract";
+import { coerceMarketCategory, getEncryptedBandCount, inferCategory, MarketCategory } from "@/lib/market-ui";
 import { logInfo, logWarn } from "@/lib/telemetry";
 
 type MarketTab = "All" | "Crypto" | "Politics" | "Sports" | "Science" | "My Markets";
@@ -78,6 +78,11 @@ export function MarketsDashboard() {
         },
         {
           ...shieldBetConfig,
+          functionName: "getMarketDetails" as const,
+          args: [marketId] as const
+        },
+        {
+          ...shieldBetConfig,
           functionName: "marketResolutionCID" as const,
           args: [marketId] as const
         }
@@ -107,11 +112,12 @@ export function MarketsDashboard() {
     if (!marketBatch?.length) return [] as ParsedMarket[];
 
     const rows: ParsedMarket[] = [];
-    for (let i = 0; i < marketBatch.length; i += 3) {
+    for (let i = 0; i < marketBatch.length; i += 4) {
       const marketRes = marketBatch[i];
       const metadataRes = marketBatch[i + 1];
-      const resolutionRes = marketBatch[i + 2];
-      const marketId = ids[i / 3];
+      const detailsRes = marketBatch[i + 2];
+      const resolutionRes = marketBatch[i + 3];
+      const marketId = ids[i / 4];
 
       if (marketRes?.status !== "success" || !marketRes.result) {
         logWarn("markets-dashboard", "market read failed", {
@@ -141,6 +147,9 @@ export function MarketsDashboard() {
         continue;
       }
 
+      const details = detailsRes?.status === "success" ? decodeMarketDetails(detailsRes.result) : null;
+      const category = details?.category.trim() ? coerceMarketCategory(details.category.trim()) : inferCategory(market.question);
+
       rows.push({
         marketId,
         question: market.question,
@@ -150,7 +159,7 @@ export function MarketsDashboard() {
         creator: market.creator,
         metadataCid: metadataRes?.status === "success" && metadataRes.result ? String(metadataRes.result) : "",
         resolutionCid: resolutionRes?.status === "success" && resolutionRes.result ? String(resolutionRes.result) : "",
-        category: inferCategory(market.question),
+        category,
         encryptedActivity: getEncryptedBandCount(marketId)
       });
     }
