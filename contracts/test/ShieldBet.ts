@@ -34,6 +34,11 @@ describe("ShieldBet", function () {
     };
   }
 
+  async function advancePastDeadline(deadline: bigint) {
+    await ethers.provider.send("evm_setNextBlockTimestamp", [Number(deadline) + 1]);
+    await ethers.provider.send("evm_mine", []);
+  }
+
   it("creates markets and anchors metadata CID", async function () {
     const { shieldBet, alice } = await deployFixture();
     const deadline = BigInt((await ethers.provider.getBlock("latest"))!.timestamp + 3600);
@@ -85,6 +90,7 @@ describe("ShieldBet", function () {
 
     expect(await shieldBet.hasPosition(1, alice.address)).to.equal(true);
     expect(await shieldBet.hasPosition(1, bob.address)).to.equal(true);
+    expect(await shieldBet.marketPoolBalance(1)).to.equal(aliceAmount + bobAmount);
 
     expect(await ethers.provider.getBalance(shieldBetAddress)).to.equal(aliceAmount + bobAmount);
 
@@ -128,17 +134,20 @@ describe("ShieldBet", function () {
       value: bobAmount
     });
 
+    await advancePastDeadline(deadline);
     await shieldBet.connect(owner).resolveMarket(1, 1);
     await shieldBet.connect(owner).anchorResolutionCID(1, "bafy-resolution-cid");
 
     const payout = 3_000_000_000_000_000_000n;
-    await expect(shieldBet.connect(owner).assignWinnerPayout(1, alice.address, payout))
+    await expect(shieldBet.connect(owner).computeAndAssignPayout(1, alice.address, aliceAmount, aliceAmount))
       .to.emit(shieldBet, "PayoutAssigned")
       .withArgs(1n, alice.address, payout);
 
     const quote = await shieldBet.getClaimQuote(1, alice.address);
     expect(quote[1]).to.equal(true);
     expect(quote[0]).to.equal(payout);
+    expect(await shieldBet.marketPoolBalance(1)).to.equal(aliceAmount + bobAmount);
+    expect(await shieldBet.reservedPayoutBalance(1)).to.equal(payout);
 
     await expect(shieldBet.connect(bob).claimWinnings(1)).to.be.revertedWithCustomError(shieldBet, "NoClaimablePayout");
 
@@ -146,7 +155,81 @@ describe("ShieldBet", function () {
       [alice, shieldBet],
       [payout, -payout]
     );
+    expect(await shieldBet.marketPoolBalance(1)).to.equal(0n);
+    expect(await shieldBet.reservedPayoutBalance(1)).to.equal(0n);
 
     await expect(shieldBet.connect(alice).claimWinnings(1)).to.be.revertedWithCustomError(shieldBet, "AlreadyClaimed");
+  });
+
+  it("prevents owner payout assignment above the market pool", async function () {
+    const { shieldBet, owner, alice } = await deployFixture();
+    const shieldBetAddress = await shieldBet.getAddress();
+    const deadline = BigInt((await ethers.provider.getBlock("latest"))!.timestamp + 3600);
+
+    await shieldBet.connect(owner).createMarket("Overpay test", deadline);
+
+    const aliceAmount = 1_000_000_000_000_000_000n;
+    const aliceBet = await encryptBet(shieldBetAddress, alice.address, 1, aliceAmount);
+    await shieldBet.connect(alice).placeBet(1, aliceBet.encOutcome, aliceBet.encAmount, aliceBet.inputProof, {
+      value: aliceAmount
+    });
+
+    await advancePastDeadline(deadline);
+    await shieldBet.connect(owner).resolveMarket(1, 1);
+
+    await expect(
+      shieldBet.connect(owner).computeAndAssignPayout(1, alice.address, aliceAmount, aliceAmount - 1n)
+    ).to.be.revertedWithCustomError(shieldBet, "InvalidWinningTotals");
+  });
+
+  it("prevents resolution before the deadline", async function () {
+    const { shieldBet, owner } = await deployFixture();
+    const deadline = BigInt((await ethers.provider.getBlock("latest"))!.timestamp + 3600);
+
+    await shieldBet.connect(owner).createMarket("Early resolution test", deadline);
+
+    await expect(shieldBet.connect(owner).resolveMarket(1, 1)).to.be.revertedWithCustomError(
+      shieldBet,
+      "MarketStillOpen"
+    );
+  });
+
+  it("computes payouts pro-rata against the distributable pool", async function () {
+    const { shieldBet, owner, alice, bob } = await deployFixture();
+    const shieldBetAddress = await shieldBet.getAddress();
+    const deadline = BigInt((await ethers.provider.getBlock("latest"))!.timestamp + 3600);
+
+    await shieldBet.connect(owner).createMarket("Pro-rata test", deadline);
+    await shieldBet.connect(owner).setMarketFeeBasisPoints(1, 200);
+
+    const aliceAmount = 2_000_000_000_000_000_000n;
+    const bobAmount = 3_000_000_000_000_000_000n;
+
+    const aliceBet = await encryptBet(shieldBetAddress, alice.address, 1, aliceAmount);
+    await shieldBet.connect(alice).placeBet(1, aliceBet.encOutcome, aliceBet.encAmount, aliceBet.inputProof, {
+      value: aliceAmount
+    });
+
+    const bobBet = await encryptBet(shieldBetAddress, bob.address, 2, bobAmount);
+    await shieldBet.connect(bob).placeBet(1, bobBet.encOutcome, bobBet.encAmount, bobBet.inputProof, {
+      value: bobAmount
+    });
+
+    await advancePastDeadline(deadline);
+    await shieldBet.connect(owner).resolveMarket(1, 1);
+
+    const pool = aliceAmount + bobAmount;
+    const fee = (pool * 200n) / 10_000n;
+    const expectedPayout = pool - fee;
+
+    await expect(shieldBet.connect(owner).computeAndAssignPayout(1, alice.address, aliceAmount, aliceAmount))
+      .to.emit(shieldBet, "PayoutAssigned")
+      .withArgs(1n, alice.address, expectedPayout);
+
+    expect(await shieldBet.accruedFees()).to.equal(fee);
+    expect(await shieldBet.marketFeeAmount(1)).to.equal(fee);
+
+    const quote = await shieldBet.getClaimQuote(1, alice.address);
+    expect(quote[0]).to.equal(expectedPayout);
   });
 });

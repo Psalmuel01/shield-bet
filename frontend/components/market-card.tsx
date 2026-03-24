@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Lock, ShieldAlert } from "lucide-react";
 import { useMemo } from "react";
+import { formatEther } from "viem";
 import { cidToExplorer, formatDeadline, getCountdown } from "@/lib/format";
 import { getEncryptedBandCount, getMarketStatus, MarketCategory, renderEncryptedDots } from "@/lib/market-ui";
 
@@ -15,6 +16,7 @@ interface MarketCardProps {
   category: MarketCategory;
   metadataCid: string;
   resolutionCid: string;
+  poolBalanceWei: bigint;
 }
 
 const categoryStyles: Record<string, string> = {
@@ -28,11 +30,13 @@ const categoryStyles: Record<string, string> = {
 const statusStyles: Record<string, string> = {
   Open: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300",
   "Closing Soon": "bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-300",
+  Closed: "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300",
   Resolved: "bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300"
 };
 
-export function MarketCard({ marketId, question, deadline, outcome, resolved, category, metadataCid, resolutionCid }: MarketCardProps) {
+export function MarketCard({ marketId, question, deadline, outcome, resolved, category, metadataCid, resolutionCid, poolBalanceWei }: MarketCardProps) {
   const status = getMarketStatus(deadline, resolved);
+  const closed = status === "Closed";
 
   const encryptedBandCount = useMemo(() => getEncryptedBandCount(marketId), [marketId]);
   const encryptedBandText = renderEncryptedDots(encryptedBandCount);
@@ -49,8 +53,17 @@ export function MarketCard({ marketId, question, deadline, outcome, resolved, ca
       </Link>
 
       <div className="mt-3 space-y-1">
-        <p className="text-sm text-slate-600 dark:text-slate-400">{getCountdown(deadline)}</p>
-        <p className="text-sm text-slate-600 dark:text-slate-400">Closing {formatDeadline(deadline)}</p>
+        {resolved ? (
+          <p className="text-sm text-slate-600 dark:text-slate-400">Market closed {formatDeadline(deadline)}</p>
+        ) : closed ? (
+          <p className="text-sm text-slate-600 dark:text-slate-400">Market closed {formatDeadline(deadline)}</p>
+        ) : (
+          <>
+            <p className="text-sm text-slate-600 dark:text-slate-400">{getCountdown(deadline)}</p>
+            <p className="text-sm text-slate-600 dark:text-slate-400">Closing {formatDeadline(deadline)}</p>
+          </>
+        )}
+        <p className="text-sm text-slate-600 dark:text-slate-400">Pool balance {Number(formatEther(poolBalanceWei)).toFixed(4)} ETH</p>
       </div>
 
       <div className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50/70 p-3 dark:border-indigo-500/30 dark:bg-indigo-500/10">
@@ -71,7 +84,7 @@ export function MarketCard({ marketId, question, deadline, outcome, resolved, ca
       )}
 
       <div className="mt-4 grid grid-cols-2 gap-2">
-        {resolved ? (
+        {resolved || closed ? (
           <>
             <div className="rounded-lg bg-slate-200 px-3 py-2 text-center text-sm font-semibold text-slate-500 dark:bg-slate-800 dark:text-slate-400">
               YES

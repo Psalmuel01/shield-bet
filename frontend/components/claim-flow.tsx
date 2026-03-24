@@ -78,7 +78,7 @@ export function ClaimFlow({ open, onClose, payoutWei, onConfirmClaim }: ClaimFlo
         <div className="mb-4 flex items-start justify-between">
           <div>
             <p className="text-xs uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Claim Winnings</p>
-            <h3 className="section-title">Lit Decryption Flow</h3>
+            <h3 className="section-title">Claim Verification Flow</h3>
           </div>
           <button
             type="button"
@@ -92,9 +92,9 @@ export function ClaimFlow({ open, onClose, payoutWei, onConfirmClaim }: ClaimFlo
         <div className="space-y-3">
           <div className="surface-muted p-3 text-sm">
             <p className="flex items-center gap-2 font-medium text-slate-800 dark:text-slate-200">
-              <Lock className="h-4 w-4 text-indigo-500" /> Decrypting your winnings via Lit Protocol...
+              <Lock className="h-4 w-4 text-indigo-500" /> Verifying your winnings before withdrawal...
             </p>
-            <p className="subtle mt-1">Lit PKP verifying your winning position.</p>
+            <p className="subtle mt-1">Lit attestation runs when available. On-chain verification remains the fallback path.</p>
           </div>
 
           {(stage === "lit" || stage === "submitting") && (
@@ -172,7 +172,7 @@ export function ClaimFlow({ open, onClose, payoutWei, onConfirmClaim }: ClaimFlo
           {stage === "done" ? (
             <p className="flex items-center gap-2 rounded-lg bg-emerald-100 px-3 py-2 text-sm font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
               <Sparkles className="h-4 w-4" />
-              {claimResult?.mode === "lit" ? "Claim submitted with Lit verification." : "Claim submitted to wallet."}
+              {claimResult?.mode === "lit" ? "Claim submitted with Lit verification." : "Claim submitted with on-chain verification."}
             </p>
           ) : (
             <button

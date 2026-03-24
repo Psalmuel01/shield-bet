@@ -22,6 +22,7 @@ interface ParsedMarket {
   resolutionCid: string;
   category: MarketCategory;
   encryptedActivity: number;
+  poolBalanceWei: bigint;
 }
 
 const tabs: MarketTab[] = ["All", "Crypto", "Politics", "Sports", "Science", "My Markets"];
@@ -85,6 +86,11 @@ export function MarketsDashboard() {
           ...shieldBetConfig,
           functionName: "marketResolutionCID" as const,
           args: [marketId] as const
+        },
+        {
+          ...shieldBetConfig,
+          functionName: "marketPoolBalance" as const,
+          args: [marketId] as const
         }
       ]),
     [ids]
@@ -112,12 +118,13 @@ export function MarketsDashboard() {
     if (!marketBatch?.length) return [] as ParsedMarket[];
 
     const rows: ParsedMarket[] = [];
-    for (let i = 0; i < marketBatch.length; i += 4) {
+    for (let i = 0; i < marketBatch.length; i += 5) {
       const marketRes = marketBatch[i];
       const metadataRes = marketBatch[i + 1];
       const detailsRes = marketBatch[i + 2];
       const resolutionRes = marketBatch[i + 3];
-      const marketId = ids[i / 4];
+      const poolBalanceRes = marketBatch[i + 4];
+      const marketId = ids[i / 5];
 
       if (marketRes?.status !== "success" || !marketRes.result) {
         logWarn("markets-dashboard", "market read failed", {
@@ -160,7 +167,8 @@ export function MarketsDashboard() {
         metadataCid: metadataRes?.status === "success" && metadataRes.result ? String(metadataRes.result) : "",
         resolutionCid: resolutionRes?.status === "success" && resolutionRes.result ? String(resolutionRes.result) : "",
         category,
-        encryptedActivity: getEncryptedBandCount(marketId)
+        encryptedActivity: getEncryptedBandCount(marketId),
+        poolBalanceWei: poolBalanceRes?.status === "success" && typeof poolBalanceRes.result === "bigint" ? poolBalanceRes.result : 0n
       });
     }
 

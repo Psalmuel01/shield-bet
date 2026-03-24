@@ -30,6 +30,13 @@ contract ShieldBet is ZamaEthereumConfig, Ownable {
     mapping(uint256 => mapping(address => euint8)) private betOutcomes;
     mapping(uint256 => mapping(address => bool)) public hasClaimed;
     mapping(uint256 => mapping(address => bool)) public hasPosition;
+    mapping(uint256 => uint256) public totalPool;
+    mapping(uint256 => uint256) public marketPoolBalance;
+    mapping(uint256 => uint256) public reservedPayoutBalance;
+    mapping(uint256 => uint256) public feeBasisPoints;
+    mapping(uint256 => uint256) public marketFeeAmount;
+    mapping(uint256 => bool) public payoutModelInitialized;
+    uint256 public accruedFees;
 
     // Assigned after market resolution by the owner/oracle flow (e.g. Lit Action backend).
     mapping(uint256 => mapping(address => uint256)) public claimablePayouts;
@@ -56,6 +63,11 @@ contract ShieldBet is ZamaEthereumConfig, Ownable {
     error AlreadyClaimed();
     error NoClaimablePayout();
     error NotMarketCreator();
+    error InsufficientPoolBalance();
+    error MarketStillOpen();
+    error InvalidWinningTotals();
+    error FeeTooHigh();
+    error PayoutExceedsBalance();
 
     constructor() Ownable(msg.sender) {}
 
@@ -145,6 +157,8 @@ contract ShieldBet is ZamaEthereumConfig, Ownable {
         betOutcomes[marketId][msg.sender] = outcome;
         betAmounts[marketId][msg.sender] = amount;
         hasPosition[marketId][msg.sender] = true;
+        totalPool[marketId] += msg.value;
+        marketPoolBalance[marketId] += msg.value;
 
         // Encrypted pool updates without decrypting outcome/amount.
         ebool isYes = FHE.eq(outcome, FHE.asEuint8(1));
@@ -163,6 +177,7 @@ contract ShieldBet is ZamaEthereumConfig, Ownable {
     function resolveMarket(uint256 marketId, uint8 outcome) external onlyOwner {
         Market storage market = _requireMarket(marketId);
         if (market.resolved) revert MarketAlreadyResolved();
+        if (block.timestamp < market.deadline) revert MarketStillOpen();
         if (outcome != 1 && outcome != 2) revert InvalidOutcome();
 
         market.outcome = outcome;
@@ -179,12 +194,50 @@ contract ShieldBet is ZamaEthereumConfig, Ownable {
         emit MarketResolutionAnchored(marketId, cid);
     }
 
-    function assignWinnerPayout(uint256 marketId, address winner, uint256 payoutAmount) external onlyOwner {
+    function setMarketFeeBasisPoints(uint256 marketId, uint256 feeBps) external onlyOwner {
+        Market storage market = _requireMarket(marketId);
+        if (market.resolved) revert MarketAlreadyResolved();
+        if (feeBps > 10_000) revert FeeTooHigh();
+
+        feeBasisPoints[marketId] = feeBps;
+    }
+
+    function computeAndAssignPayout(
+        uint256 marketId,
+        address winner,
+        uint256 winnerBetAmount,
+        uint256 totalWinningSide
+    ) external onlyOwner {
         Market storage market = _requireMarket(marketId);
         if (!market.resolved) revert MarketNotResolved();
+        if (hasClaimed[marketId][winner]) revert AlreadyClaimed();
+        if (winnerBetAmount == 0 || totalWinningSide == 0 || winnerBetAmount > totalWinningSide) revert InvalidWinningTotals();
 
-        claimablePayouts[marketId][winner] = payoutAmount;
-        emit PayoutAssigned(marketId, winner, payoutAmount);
+        uint256 pool = totalPool[marketId];
+        uint256 fee = marketFeeAmount[marketId];
+        if (!payoutModelInitialized[marketId]) {
+            fee = (pool * feeBasisPoints[marketId]) / 10_000;
+            marketFeeAmount[marketId] = fee;
+            payoutModelInitialized[marketId] = true;
+            accruedFees += fee;
+        }
+
+        uint256 distributablePool = pool - fee;
+        uint256 payout = (winnerBetAmount * distributablePool) / totalWinningSide;
+        if (payout > address(this).balance) revert PayoutExceedsBalance();
+
+        uint256 previousPayout = claimablePayouts[marketId][winner];
+        uint256 reservedBalance = reservedPayoutBalance[marketId];
+        if (payout > previousPayout) {
+            uint256 additionalReservation = payout - previousPayout;
+            if (reservedBalance + additionalReservation > distributablePool) revert InsufficientPoolBalance();
+            reservedPayoutBalance[marketId] = reservedBalance + additionalReservation;
+        } else if (previousPayout > payout) {
+            reservedPayoutBalance[marketId] = reservedBalance - (previousPayout - payout);
+        }
+
+        claimablePayouts[marketId][winner] = payout;
+        emit PayoutAssigned(marketId, winner, payout);
     }
 
     function claimWinnings(uint256 marketId) external {
@@ -197,6 +250,8 @@ contract ShieldBet is ZamaEthereumConfig, Ownable {
 
         hasClaimed[marketId][msg.sender] = true;
         claimablePayouts[marketId][msg.sender] = 0;
+        marketPoolBalance[marketId] -= payout;
+        reservedPayoutBalance[marketId] -= payout;
 
         (bool sent, ) = msg.sender.call{value: payout}("");
         require(sent, "ETH transfer failed");

@@ -32,7 +32,7 @@ async function main() {
     throw new Error("Unable to load latest block");
   }
 
-  const deadline = BigInt(latestBlock.timestamp + 3600);
+  const deadline = BigInt(latestBlock.timestamp + 60);
   console.log("Creating market on live chain...");
   const createTx = await shieldBet.createMarketWithMetadata(
     "Live demo: Will ShieldBet settle correctly on Sepolia today?",
@@ -99,10 +99,16 @@ async function main() {
       })
   ).wait();
 
-  console.log("Resolving market YES and assigning payout...");
+  console.log("Waiting for market close...");
+  while (true) {
+    const currentBlock = await provider.getBlock("latest");
+    if (currentBlock && BigInt(currentBlock.timestamp) > deadline) break;
+    await new Promise((resolve) => setTimeout(resolve, 4_000));
+  }
+
+  console.log("Resolving market YES and computing payout...");
   await (await shieldBet.resolveMarket(marketId, 1)).wait();
-  const payout = aliceAmount + bobAmount;
-  await (await shieldBet.assignWinnerPayout(marketId, alice.address, payout)).wait();
+  await (await shieldBet.computeAndAssignPayout(marketId, alice.address, aliceAmount, aliceAmount)).wait();
 
   console.log("Claiming winnings from alice...");
   const claimTx = await shieldBet.connect(alice).claimWinnings(marketId);

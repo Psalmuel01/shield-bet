@@ -1,5 +1,5 @@
 export type MarketCategory = "Crypto" | "Politics" | "Sports" | "Science" | "Other";
-export type MarketStatus = "Open" | "Closing Soon" | "Resolved";
+export type MarketStatus = "Open" | "Closing Soon" | "Closed" | "Resolved";
 
 const MARKET_CATEGORIES: MarketCategory[] = ["Crypto", "Politics", "Sports", "Science", "Other"];
 
@@ -29,6 +29,7 @@ export function getMarketStatus(deadline: bigint, resolved: boolean): MarketStat
   if (resolved) return "Resolved";
 
   const diffMs = Number(deadline) * 1000 - Date.now();
+  if (diffMs <= 0) return "Closed";
   if (diffMs <= 24 * 60 * 60 * 1000) return "Closing Soon";
   return "Open";
 }

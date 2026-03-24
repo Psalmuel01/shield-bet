@@ -48,6 +48,15 @@ type LitNetworkName =
   | "datil";
 
 const DEFAULT_LIT_NETWORK: LitNetworkName = "naga-test";
+const DEFAULT_LIT_CONNECT_TIMEOUT_MS = Number(process.env.NEXT_PUBLIC_LIT_CONNECT_TIMEOUT_MS || 45000);
+const RETRY_LIT_CONNECT_TIMEOUT_MS = Number(process.env.NEXT_PUBLIC_LIT_CONNECT_TIMEOUT_RETRY_MS || 70000);
+
+export class LitHandshakeTimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LitHandshakeTimeoutError";
+  }
+}
 
 function resolveLitNetworkConfig() {
   const requested = (process.env.NEXT_PUBLIC_LIT_NETWORK || DEFAULT_LIT_NETWORK).toLowerCase() as LitNetworkName;
@@ -108,6 +117,24 @@ function normalizeChecks(value: unknown): string[] {
   return value
     .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
     .filter((entry) => entry.length > 0);
+}
+
+function isHandshakeTimeoutError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes("Could not handshake with nodes after timeout");
+}
+
+function createNetworkWithTimeout(timeoutMs: number) {
+  const resolved = resolveLitNetworkConfig();
+  return {
+    ...resolved,
+    network: {
+      ...resolved.network,
+      config: {
+        ...resolved.network.config,
+        abortTimeout: timeoutMs
+      }
+    }
+  };
 }
 
 function buildLitAttestation(params: LitClaimExecutionParams, response: unknown): LitClaimAttestation {
@@ -200,58 +227,79 @@ export async function runLitClaimAction(params: LitClaimExecutionParams): Promis
     throw new Error("Wallet client is not connected");
   }
 
-  const networkConfig = resolveLitNetworkConfig();
-  const litClient = await createLitClient({
-    network: networkConfig.network
-  });
+  async function executeWithTimeout(timeoutMs: number) {
+    const networkConfig = createNetworkWithTimeout(timeoutMs);
+    const litClient = await createLitClient({
+      network: networkConfig.network
+    });
+
+    try {
+      const authManager = createAuthManager({
+        storage: localStorage({
+          appName: "shieldbet",
+          networkName: networkConfig.name
+        })
+      });
+
+      const authContext = await authManager.createEoaAuthContext({
+        litClient,
+        config: {
+          account: params.walletClient
+        },
+        authConfig: {
+          domain: typeof window !== "undefined" ? window.location.host : "shieldbet.app",
+          statement: "Authorize ShieldBet confidential claim verification.",
+          expiration: new Date(Date.now() + 1000 * 60 * 10).toISOString(),
+          resources: [
+            {
+              ability: "lit-action-execution",
+              resource: params.actionCid
+            }
+          ]
+        }
+      });
+
+      const execution = await litClient.executeJs({
+        ipfsId: params.actionCid,
+        authContext,
+        jsParams: {
+          marketId: params.marketId,
+          account: params.account,
+          resolvedOutcome: params.resolvedOutcome,
+          expectedPayoutWei: params.expectedPayoutWei,
+          txHash: params.txHash || ""
+        }
+      });
+
+      const attestation = buildLitAttestation(params, execution?.response);
+
+      return {
+        actionCid: params.actionCid,
+        response: execution?.response ?? null,
+        logs: normalizeLitLogs(execution?.logs),
+        attestation
+      };
+    } finally {
+      litClient.disconnect();
+    }
+  }
 
   try {
-    const authManager = createAuthManager({
-      storage: localStorage({
-        appName: "shieldbet",
-        networkName: networkConfig.name
-      })
-    });
+    return await executeWithTimeout(DEFAULT_LIT_CONNECT_TIMEOUT_MS);
+  } catch (error) {
+    if (!isHandshakeTimeoutError(error)) {
+      throw error;
+    }
 
-    const authContext = await authManager.createEoaAuthContext({
-      litClient,
-      config: {
-        account: params.walletClient
-      },
-      authConfig: {
-        domain: typeof window !== "undefined" ? window.location.host : "shieldbet.app",
-        statement: "Authorize ShieldBet confidential claim verification.",
-        expiration: new Date(Date.now() + 1000 * 60 * 10).toISOString(),
-        resources: [
-          {
-            ability: "lit-action-execution",
-            resource: params.actionCid
-          }
-        ]
+    try {
+      return await executeWithTimeout(RETRY_LIT_CONNECT_TIMEOUT_MS);
+    } catch (retryError) {
+      if (isHandshakeTimeoutError(retryError)) {
+        throw new LitHandshakeTimeoutError(
+          "Lit verification timed out while contacting Naga nodes. We retried with a longer timeout, but the network is still unavailable."
+        );
       }
-    });
-
-    const execution = await litClient.executeJs({
-      ipfsId: params.actionCid,
-      authContext,
-      jsParams: {
-        marketId: params.marketId,
-        account: params.account,
-        resolvedOutcome: params.resolvedOutcome,
-        expectedPayoutWei: params.expectedPayoutWei,
-        txHash: params.txHash || ""
-      }
-    });
-
-    const attestation = buildLitAttestation(params, execution?.response);
-
-    return {
-      actionCid: params.actionCid,
-      response: execution?.response ?? null,
-      logs: normalizeLitLogs(execution?.logs),
-      attestation
-    };
-  } finally {
-    litClient.disconnect();
+      throw retryError;
+    }
   }
 }

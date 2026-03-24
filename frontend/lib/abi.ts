@@ -37,6 +37,41 @@ export const shieldBetAbi = [
   },
   {
     type: "function",
+    name: "totalPool",
+    stateMutability: "view",
+    inputs: [{ name: "marketId", type: "uint256" }],
+    outputs: [{ name: "", type: "uint256" }]
+  },
+  {
+    type: "function",
+    name: "marketPoolBalance",
+    stateMutability: "view",
+    inputs: [{ name: "marketId", type: "uint256" }],
+    outputs: [{ name: "", type: "uint256" }]
+  },
+  {
+    type: "function",
+    name: "reservedPayoutBalance",
+    stateMutability: "view",
+    inputs: [{ name: "marketId", type: "uint256" }],
+    outputs: [{ name: "", type: "uint256" }]
+  },
+  {
+    type: "function",
+    name: "feeBasisPoints",
+    stateMutability: "view",
+    inputs: [{ name: "marketId", type: "uint256" }],
+    outputs: [{ name: "", type: "uint256" }]
+  },
+  {
+    type: "function",
+    name: "marketFeeAmount",
+    stateMutability: "view",
+    inputs: [{ name: "marketId", type: "uint256" }],
+    outputs: [{ name: "", type: "uint256" }]
+  },
+  {
+    type: "function",
     name: "createMarket",
     stateMutability: "nonpayable",
     inputs: [
@@ -113,12 +148,23 @@ export const shieldBetAbi = [
   },
   {
     type: "function",
-    name: "assignWinnerPayout",
+    name: "setMarketFeeBasisPoints",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "marketId", type: "uint256" },
+      { name: "feeBps", type: "uint256" }
+    ],
+    outputs: []
+  },
+  {
+    type: "function",
+    name: "computeAndAssignPayout",
     stateMutability: "nonpayable",
     inputs: [
       { name: "marketId", type: "uint256" },
       { name: "winner", type: "address" },
-      { name: "payoutAmount", type: "uint256" }
+      { name: "winnerBetAmount", type: "uint256" },
+      { name: "totalWinningSide", type: "uint256" }
     ],
     outputs: []
   },

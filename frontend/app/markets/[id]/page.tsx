@@ -18,14 +18,15 @@ import { decodeMarketDetails, decodeMarketView } from "@/lib/market-contract";
 import { getEncryptedBandCount, inferCategory, getMarketStatus } from "@/lib/market-ui";
 import { getLocalBet, saveLocalBet } from "@/lib/local-bets";
 import { getRuntimeDiagnostics } from "@/lib/runtime-config";
-import { logError, logInfo } from "@/lib/telemetry";
+import { logError, logInfo, logWarn } from "@/lib/telemetry";
 
 export default function MarketBetPage() {
   const params = useParams<{ id: string }>();
   const searchParams = useSearchParams();
-  const marketId = useMemo(() => BigInt(params.id), [params.id]);
+  const marketParam = params?.id;
+  const marketId = useMemo(() => BigInt(marketParam || "0"), [marketParam]);
 
-  const initialSide = searchParams.get("side")?.toLowerCase();
+  const initialSide = searchParams?.get("side")?.toLowerCase();
 
   const [selectedOutcome, setSelectedOutcome] = useState<BetOutcome>(initialSide === "no" ? 2 : 1);
   const [amount, setAmount] = useState("0.10");
@@ -34,8 +35,10 @@ export default function MarketBetPage() {
 
   const [adminResolveOutcome, setAdminResolveOutcome] = useState<BetOutcome>(1);
   const [adminWinner, setAdminWinner] = useState("");
-  const [adminPayout, setAdminPayout] = useState("0.0");
+  const [adminWinnerStake, setAdminWinnerStake] = useState("0.0");
+  const [adminWinningSideTotal, setAdminWinningSideTotal] = useState("0.0");
   const [adminMessage, setAdminMessage] = useState<string | null>(null);
+  const [betFlowStage, setBetFlowStage] = useState<"idle" | "encrypting" | "wallet" | "confirming">("idle");
 
   const [localPosition, setLocalPosition] = useState<"YES" | "NO" | "Encrypted">("Encrypted");
 
@@ -78,6 +81,30 @@ export default function MarketBetPage() {
     args: [marketId]
   });
 
+  const { data: marketPoolBalance } = useReadContract({
+    ...shieldBetConfig,
+    functionName: "marketPoolBalance",
+    args: [marketId]
+  });
+
+  const { data: totalPool } = useReadContract({
+    ...shieldBetConfig,
+    functionName: "totalPool",
+    args: [marketId]
+  });
+
+  const { data: reservedPayoutBalance } = useReadContract({
+    ...shieldBetConfig,
+    functionName: "reservedPayoutBalance",
+    args: [marketId]
+  });
+
+  const { data: feeBasisPoints } = useReadContract({
+    ...shieldBetConfig,
+    functionName: "feeBasisPoints",
+    args: [marketId]
+  });
+
   const { data: hasPosition } = useReadContract({
     ...shieldBetConfig,
     functionName: "hasPosition",
@@ -108,9 +135,13 @@ export default function MarketBetPage() {
     logInfo("market-detail", "read market cids", {
       marketId: marketId.toString(),
       metadataCid: metadataCid || "",
-      resolutionCid: resolutionCid || ""
+      resolutionCid: resolutionCid || "",
+      totalPoolWei: typeof totalPool === "bigint" ? totalPool.toString() : "0",
+      marketPoolBalanceWei: typeof marketPoolBalance === "bigint" ? marketPoolBalance.toString() : "0",
+      reservedPayoutBalanceWei: typeof reservedPayoutBalance === "bigint" ? reservedPayoutBalance.toString() : "0",
+      feeBasisPoints: typeof feeBasisPoints === "bigint" ? feeBasisPoints.toString() : "0"
     });
-  }, [marketId, metadataCid, resolutionCid]);
+  }, [marketId, metadataCid, resolutionCid, totalPool, marketPoolBalance, reservedPayoutBalance, feeBasisPoints]);
 
   useEffect(() => {
     logInfo("market-detail", "read position and claim quote", {
@@ -135,6 +166,10 @@ export default function MarketBetPage() {
 
     setLocalPosition(bet.position);
   }, [marketId, address, hash]);
+
+  if (!marketParam) {
+    return <p className="subtle">Loading market...</p>;
+  }
 
   if (!marketData) {
     return <p className="subtle">Loading market...</p>;
@@ -164,6 +199,42 @@ export default function MarketBetPage() {
 
   const encryptedVolumeBands = getEncryptedBandCount(marketId, 6, 10);
   const participantBands = getEncryptedBandCount(marketId + 11n, 3, 8);
+  const poolBalanceWei = typeof marketPoolBalance === "bigint" ? marketPoolBalance : 0n;
+  const totalPoolWei = typeof totalPool === "bigint" ? totalPool : poolBalanceWei;
+  const reservedPayoutWei = typeof reservedPayoutBalance === "bigint" ? reservedPayoutBalance : 0n;
+  const feeBps = typeof feeBasisPoints === "bigint" ? feeBasisPoints : 0n;
+  const marketClosed = Date.now() >= Number(deadline) * 1000;
+  const canPlaceBet = !resolved && !marketClosed;
+  const poolBalanceLabel = `${Number(formatEther(poolBalanceWei)).toFixed(4)} ETH`;
+  const totalPoolLabel = `${Number(formatEther(totalPoolWei)).toFixed(4)} ETH`;
+  const reservedPayoutLabel = `${Number(formatEther(reservedPayoutWei)).toFixed(4)} ETH`;
+  const knownPosition = localPosition === "YES" || localPosition === "NO";
+  const userOutcomeMatches =
+    knownPosition && resolved
+      ? (localPosition === "YES" && outcome === 1) || (localPosition === "NO" && outcome === 2)
+      : null;
+  const marketStatusClass =
+    marketStatus === "Resolved"
+      ? "bg-slate-100 text-slate-700 dark:bg-slate-900 dark:text-slate-300"
+      : marketStatus === "Closed"
+        ? "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300"
+        : marketStatus === "Closing Soon"
+          ? "bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-300"
+          : "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300";
+  const projectedPayoutWei =
+    adminWinnerStake && adminWinningSideTotal && Number(adminWinningSideTotal) > 0
+      ? (() => {
+          try {
+            const winnerStakeWei = parseEther(adminWinnerStake || "0");
+            const winningSideTotalWei = parseEther(adminWinningSideTotal || "0");
+            if (winningSideTotalWei === 0n || winnerStakeWei > winningSideTotalWei) return null;
+            const distributablePoolWei = totalPoolWei - ((totalPoolWei * feeBps) / 10_000n);
+            return (winnerStakeWei * distributablePoolWei) / winningSideTotalWei;
+          } catch {
+            return null;
+          }
+        })()
+      : null;
 
   function getErrorMessage(error: unknown): string {
     if (error instanceof Error) {
@@ -179,6 +250,10 @@ export default function MarketBetPage() {
     }
 
     return String(error);
+  }
+
+  async function flushUi() {
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
   }
 
   async function placeBet() {
@@ -197,6 +272,9 @@ export default function MarketBetPage() {
 
     try {
       setStatusMessage(null);
+      setBetFlowStage("encrypting");
+      setStatusMessage("Preparing confidential payload...");
+      await flushUi();
 
       const amountWei = parseEther(amount);
       logInfo("market-detail", "placeBet encrypt request", {
@@ -205,6 +283,8 @@ export default function MarketBetPage() {
         selectedOutcome,
         amountWei: amountWei.toString()
       });
+      setStatusMessage("Encrypting your side and stake with Zama fhEVM...");
+      await flushUi();
       const encrypted = await encryptBetInputs(selectedOutcome, amountWei, {
         contractAddress: shieldBetConfig.address,
         userAddress: getAddress(address)
@@ -216,16 +296,26 @@ export default function MarketBetPage() {
         inputProof: encrypted.inputProof
       });
 
-      await writeContractAsync({
+      setBetFlowStage("wallet");
+      setStatusMessage("Encrypted payload ready. Confirm the transaction in your wallet.");
+      await flushUi();
+      const txHash = await writeContractAsync({
         ...shieldBetConfig,
         functionName: "placeBet",
         args: [marketId, encrypted.encOutcome, encrypted.encAmount, encrypted.inputProof],
         value: amountWei
       });
+      setBetFlowStage("confirming");
+      setStatusMessage("Transaction submitted. Waiting for on-chain confirmation...");
       logInfo("market-detail", "placeBet tx submitted", {
         marketId: marketId.toString(),
-        account: address
+        account: address,
+        txHash
       });
+      const receipt = await publicClient?.waitForTransactionReceipt({ hash: txHash });
+      if (!receipt || receipt.status !== "success") {
+        throw new Error("Bet transaction failed or was not confirmed");
+      }
 
       saveLocalBet({
         marketId: marketId.toString(),
@@ -241,6 +331,8 @@ export default function MarketBetPage() {
       logError("market-detail", "placeBet failed", error);
       const message = getErrorMessage(error) || "Bet transaction failed";
       setStatusMessage(message);
+    } finally {
+      setBetFlowStage("idle");
     }
   }
 
@@ -270,28 +362,42 @@ export default function MarketBetPage() {
       }
 
       setStatusMessage("Running Lit Action eligibility check...");
-      const { runLitClaimAction } = await import("@/lib/lit");
+      const { LitHandshakeTimeoutError, runLitClaimAction } = await import("@/lib/lit");
       logInfo("market-detail", "claim lit action start", {
-          marketId: marketId.toString(),
-          account: normalizedAccount,
-          actionCid: litActionCid,
-          resolvedOutcome: outcome.toString(),
-          expectedPayoutWei: claimPayout.toString()
-        });
-      litExecution = await runLitClaimAction({
-        actionCid: litActionCid,
         marketId: marketId.toString(),
         account: normalizedAccount,
+        actionCid: litActionCid,
         resolvedOutcome: outcome.toString(),
-        expectedPayoutWei: claimPayout.toString(),
-        walletClient
+        expectedPayoutWei: claimPayout.toString()
       });
-      logInfo("market-detail", "claim lit action complete", {
-        marketId: marketId.toString(),
-        actionCid: litExecution.actionCid,
-        litAttestation: litExecution.attestation,
-        litLogs: litExecution.logs
-      });
+      try {
+        litExecution = await runLitClaimAction({
+          actionCid: litActionCid,
+          marketId: marketId.toString(),
+          account: normalizedAccount,
+          resolvedOutcome: outcome.toString(),
+          expectedPayoutWei: claimPayout.toString(),
+          walletClient
+        });
+        logInfo("market-detail", "claim lit action complete", {
+          marketId: marketId.toString(),
+          actionCid: litExecution.actionCid,
+          litAttestation: litExecution.attestation,
+          litLogs: litExecution.logs
+        });
+      } catch (error) {
+        if (error instanceof LitHandshakeTimeoutError) {
+          logWarn("market-detail", "claim lit action timed out, falling back to on-chain verification", {
+            marketId: marketId.toString(),
+            account: normalizedAccount,
+            actionCid: litActionCid,
+            message: error.message
+          });
+          setStatusMessage("Lit verification is temporarily unavailable. Continuing with on-chain claim verification only.");
+        } else {
+          throw error;
+        }
+      }
     }
 
     logInfo("market-detail", "claim submit tx", {
@@ -360,6 +466,9 @@ export default function MarketBetPage() {
       if (chainId !== expectedChainId) {
         throw new Error(`Wrong network. Switch wallet to chain ID ${expectedChainId}.`);
       }
+      if (!marketClosed) {
+        throw new Error(`Market is still open. Resolution unlocks after ${formatDeadline(deadline)}.`);
+      }
       setAdminMessage(null);
       setAdminMessage("Submitting market resolution...");
       logInfo("market-detail", "resolve submit tx", {
@@ -401,25 +510,30 @@ export default function MarketBetPage() {
         throw new Error(`Wrong network. Switch wallet to chain ID ${expectedChainId}.`);
       }
       setAdminMessage(null);
-      const payoutWei = parseEther(adminPayout || "0");
-      logInfo("market-detail", "assign payout submit tx", {
+      const winnerStakeWei = parseEther(adminWinnerStake || "0");
+      const totalWinningSideWei = parseEther(adminWinningSideTotal || "0");
+      if (winnerStakeWei <= 0n || totalWinningSideWei <= 0n || winnerStakeWei > totalWinningSideWei) {
+        throw new Error("Winner stake and total winning side must be valid positive ETH amounts.");
+      }
+      logInfo("market-detail", "compute payout submit tx", {
         marketId: marketId.toString(),
         winner: getAddress(adminWinner),
-        payoutWei: payoutWei.toString()
+        winnerStakeWei: winnerStakeWei.toString(),
+        totalWinningSideWei: totalWinningSideWei.toString()
       });
 
       await writeContractAsync({
         ...shieldBetConfig,
-        functionName: "assignWinnerPayout",
-        args: [marketId, getAddress(adminWinner), payoutWei]
+        functionName: "computeAndAssignPayout",
+        args: [marketId, getAddress(adminWinner), winnerStakeWei, totalWinningSideWei]
       });
-      logInfo("market-detail", "assign payout tx submitted", {
+      logInfo("market-detail", "compute payout tx submitted", {
         marketId: marketId.toString()
       });
-      setAdminMessage("Payout assignment transaction sent.");
+      setAdminMessage("Deterministic payout computation submitted.");
     } catch (error) {
-      logError("market-detail", "assign payout failed", error);
-      const message = error instanceof Error ? error.message : "Failed to assign payout";
+      logError("market-detail", "compute payout failed", error);
+      const message = error instanceof Error ? error.message : "Failed to compute payout";
       setAdminMessage(message);
     }
   }
@@ -444,7 +558,7 @@ export default function MarketBetPage() {
             <h1 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100 md:text-3xl">{question}</h1>
 
             <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
-              <span className="rounded-full bg-emerald-100 px-2.5 py-1 font-semibold text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300">
+              <span className={`rounded-full px-2.5 py-1 font-semibold ${marketStatusClass}`}>
                 {marketStatus}
               </span>
               <span className="rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-slate-700 dark:bg-slate-900 dark:text-slate-300">
@@ -453,8 +567,26 @@ export default function MarketBetPage() {
             </div>
 
             <div className="mt-4 grid gap-2 text-sm text-slate-600 dark:text-slate-300">
+              {resolved ? (
+                <>
+                  <p>
+                    <span className="font-medium">Market closed:</span> {formatDeadline(deadline)}
+                  </p>
+                  <p>
+                    <span className="font-medium">Resolved outcome:</span> {outcome === 1 ? "YES" : "NO"}
+                  </p>
+                </>
+              ) : marketClosed ? (
+                <p>
+                  <span className="font-medium">Market closed:</span> {formatDeadline(deadline)}
+                </p>
+              ) : (
+                <p>
+                  <span className="font-medium">Closes:</span> {formatDeadline(deadline)} ({getCountdown(deadline)})
+                </p>
+              )}
               <p>
-                <span className="font-medium">Closes:</span> {formatDeadline(deadline)} ({getCountdown(deadline)})
+                <span className="font-medium">Pool balance:</span> {poolBalanceLabel}
               </p>
               <p>
                 <span className="font-medium">Created by:</span> <span className="font-mono-ui">{creator}</span>
@@ -471,13 +603,35 @@ export default function MarketBetPage() {
             </div>
           </div>
 
-          {!resolved ? (
+          {canPlaceBet ? (
             <BetPlacement
               selectedOutcome={selectedOutcome}
               amount={amount}
               balanceLabel={balance ? `${Number(balance.formatted).toFixed(4)} ${balance.symbol}` : "Wallet not connected"}
               alreadyBet={alreadyBet}
-              isSubmitting={isPending || isConfirming}
+              isSubmitting={betFlowStage !== "idle"}
+              submitLabel={
+                alreadyBet
+                  ? "BET ALREADY PLACED"
+                  : betFlowStage === "encrypting"
+                    ? "ENCRYPTING BET..."
+                    : betFlowStage === "wallet"
+                      ? "CHECK WALLET TO SIGN"
+                      : betFlowStage === "confirming"
+                        ? "CONFIRMING ON-CHAIN..."
+                        : "CONFIRM ENCRYPTED BET"
+              }
+              statusHint={
+                alreadyBet
+                  ? "This wallet already has a confidential position in this market."
+                  : betFlowStage === "encrypting"
+                    ? "Generating encrypted inputs and proof before the wallet prompt."
+                    : betFlowStage === "wallet"
+                      ? "The encrypted payload is ready. Approve the transaction in your wallet."
+                      : betFlowStage === "confirming"
+                        ? "Your bet is submitted. Waiting for the chain to confirm it."
+                        : "Your bet amount and side will be encrypted before submission."
+              }
               onSelectOutcome={setSelectedOutcome}
               onAmountChange={setAmount}
               onMax={() => {
@@ -486,10 +640,25 @@ export default function MarketBetPage() {
               }}
               onSubmit={placeBet}
             />
+          ) : !resolved ? (
+            <div className="surface p-5">
+              <h2 className="section-title">Market closed</h2>
+              <p className="subtle mt-2">
+                Betting ended at {formatDeadline(deadline)}. This market is now waiting for the owner to publish the final outcome.
+              </p>
+            </div>
           ) : (
             <div className="surface p-5">
               <h2 className="section-title">Market resolved: {outcome === 1 ? "YES" : "NO"}</h2>
-              <p className="subtle mt-2">Use Lit Protocol claim flow to reveal and withdraw your winnings.</p>
+              <p className="subtle mt-2">
+                {eligibleToClaim
+                  ? "You have a claim quote available. Open the claim flow to verify and withdraw your winnings."
+                  : userOutcomeMatches === false
+                    ? "Your recorded side did not match the resolved outcome for this market."
+                  : alreadyBet
+                    ? "Your wallet has a position here. Claim becomes available after the owner assigns your payout."
+                    : "This market has been resolved. Claims are only available to wallets with assigned winnings."}
+              </p>
               <button
                 type="button"
                 disabled={!eligibleToClaim || isPending || isConfirming}
@@ -531,9 +700,10 @@ export default function MarketBetPage() {
                   <button
                     type="button"
                     onClick={resolveMarket}
+                    disabled={!marketClosed}
                     className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold text-white"
                   >
-                    Resolve market
+                    {marketClosed ? "Resolve market" : `Resolve after ${formatDeadline(deadline)}`}
                   </button>
                 </>
               ) : (
@@ -545,19 +715,34 @@ export default function MarketBetPage() {
                     className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none ring-indigo-500/40 focus:ring-2 dark:border-slate-700 dark:bg-slate-900"
                     placeholder="0x..."
                   />
-                  <label className="text-sm font-medium">Payout (ETH)</label>
+                  <label className="text-sm font-medium">Winner stake (ETH)</label>
                   <input
-                    value={adminPayout}
-                    onChange={(event) => setAdminPayout(event.target.value)}
+                    value={adminWinnerStake}
+                    onChange={(event) => setAdminWinnerStake(event.target.value)}
                     className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none ring-indigo-500/40 focus:ring-2 dark:border-slate-700 dark:bg-slate-900"
                     placeholder="0.0"
                   />
+                  <label className="text-sm font-medium">Total winning side (ETH)</label>
+                  <input
+                    value={adminWinningSideTotal}
+                    onChange={(event) => setAdminWinningSideTotal(event.target.value)}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none ring-indigo-500/40 focus:ring-2 dark:border-slate-700 dark:bg-slate-900"
+                    placeholder="0.0"
+                  />
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Payout formula: winner stake / total winning side × distributable pool
+                  </p>
+                  {projectedPayoutWei !== null ? (
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      Projected payout: {Number(formatEther(projectedPayoutWei)).toFixed(4)} ETH
+                    </p>
+                  ) : null}
                   <button
                     type="button"
                     onClick={assignPayout}
                     className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold text-white"
                   >
-                    Assign winner payout
+                    Compute and assign payout
                   </button>
                 </>
               )}
@@ -570,6 +755,22 @@ export default function MarketBetPage() {
           <div className="surface p-4">
             <h3 className="section-title text-base">Market Stats (Privacy Mode)</h3>
             <div className="mt-3 space-y-3 text-sm">
+              <div className="surface-muted flex items-center justify-between px-3 py-2">
+                <span>Total deposited</span>
+                <span className="font-mono-ui">{totalPoolLabel}</span>
+              </div>
+              <div className="surface-muted flex items-center justify-between px-3 py-2">
+                <span>Pool balance</span>
+                <span className="font-mono-ui">{poolBalanceLabel}</span>
+              </div>
+              <div className="surface-muted flex items-center justify-between px-3 py-2">
+                <span>Reserved payouts</span>
+                <span className="font-mono-ui">{reservedPayoutLabel}</span>
+              </div>
+              <div className="surface-muted flex items-center justify-between px-3 py-2">
+                <span>Fee rate</span>
+                <span className="font-mono-ui">{Number(feeBps) / 100}%</span>
+              </div>
               <div className="surface-muted flex items-center justify-between px-3 py-2">
                 <span>Activity visibility</span>
                 <span className="flex items-center gap-2 font-mono-ui">
@@ -589,13 +790,26 @@ export default function MarketBetPage() {
           </div>
 
           <div className="surface p-4">
-            <h3 className="section-title text-base">Your Position</h3>
+            <h3 className="section-title text-base">
+              {address && alreadyBet && knownPosition ? `Your ${localPosition} Position` : "Your Position"}
+            </h3>
             {address && alreadyBet ? (
               <div className="mt-3 space-y-2 text-sm">
-                <p className="text-slate-700 dark:text-slate-300">You have an encrypted position in this market.</p>
-                <p>
-                  Outcome: <span className="font-semibold">{localPosition}</span>
+                <p className="text-slate-700 dark:text-slate-300">
+                  {knownPosition
+                    ? `This wallet is locked into ${localPosition}.`
+                    : "This wallet has an encrypted position on-chain. The side is not available in this browser session yet."}
                 </p>
+                {knownPosition ? (
+                  <p>
+                    Outcome: <span className="font-semibold">{localPosition}</span>
+                  </p>
+                ) : null}
+                {resolved && userOutcomeMatches !== null ? (
+                  <p>
+                    Result: <span className={`font-semibold ${userOutcomeMatches ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>{userOutcomeMatches ? "Won" : "Lost"}</span>
+                  </p>
+                ) : null}
                 <p className="flex items-center gap-2">
                   Amount: <EyeOff className="h-4 w-4 text-indigo-500" /> ●●●●●● (encrypted)
                 </p>
@@ -605,9 +819,11 @@ export default function MarketBetPage() {
                   onClick={() => setClaimOpen(true)}
                   className="rounded-lg bg-emerald-500 px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  Claim available after resolution
+                  {resolved ? (eligibleToClaim ? "Claim winnings" : userOutcomeMatches === false ? "Position lost" : "Awaiting payout assignment") : "Claim available after resolution"}
                 </button>
               </div>
+            ) : address ? (
+              <p className="subtle mt-3">You have not placed a confidential bet in this market yet.</p>
             ) : (
               <p className="subtle mt-3">Connect your wallet and place a confidential bet to track your position.</p>
             )}

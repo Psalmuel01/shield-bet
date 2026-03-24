@@ -9,6 +9,8 @@ interface BetPlacementProps {
   balanceLabel: string;
   alreadyBet: boolean;
   isSubmitting: boolean;
+  submitLabel: string;
+  statusHint: string;
   onSelectOutcome: (next: BetOutcome) => void;
   onAmountChange: (next: string) => void;
   onMax: () => void;
@@ -21,6 +23,8 @@ export function BetPlacement({
   balanceLabel,
   alreadyBet,
   isSubmitting,
+  submitLabel,
+  statusHint,
   onSelectOutcome,
   onAmountChange,
   onMax,
@@ -33,8 +37,9 @@ export function BetPlacement({
       <div className="mb-4 grid grid-cols-2 gap-2">
         <button
           type="button"
+          disabled={alreadyBet || isSubmitting}
           onClick={() => onSelectOutcome(1)}
-          className={`rounded-lg border px-4 py-3 text-sm font-semibold transition hover:scale-[1.02] ${
+          className={`rounded-lg border px-4 py-3 text-sm font-semibold transition hover:scale-[1.02] disabled:cursor-not-allowed disabled:opacity-50 ${
             selectedOutcome === 1
               ? "border-emerald-600 bg-emerald-500 text-white"
               : "border-slate-300 bg-white text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
@@ -44,8 +49,9 @@ export function BetPlacement({
         </button>
         <button
           type="button"
+          disabled={alreadyBet || isSubmitting}
           onClick={() => onSelectOutcome(2)}
-          className={`rounded-lg border px-4 py-3 text-sm font-semibold transition hover:scale-[1.02] ${
+          className={`rounded-lg border px-4 py-3 text-sm font-semibold transition hover:scale-[1.02] disabled:cursor-not-allowed disabled:opacity-50 ${
             selectedOutcome === 2
               ? "border-rose-600 bg-rose-500 text-white"
               : "border-slate-300 bg-white text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
@@ -64,14 +70,16 @@ export function BetPlacement({
         <input
           id="amount"
           value={amount}
+          disabled={alreadyBet || isSubmitting}
           onChange={(event) => onAmountChange(event.target.value)}
-          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none ring-indigo-500/40 focus:ring-2 dark:border-slate-700 dark:bg-slate-900"
+          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none ring-indigo-500/40 focus:ring-2 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900"
           placeholder="0.00"
         />
         <button
           type="button"
+          disabled={alreadyBet || isSubmitting}
           onClick={onMax}
-          className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold dark:border-slate-700"
+          className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700"
         >
           MAX
         </button>
@@ -83,7 +91,7 @@ export function BetPlacement({
           <div className="enc-flow absolute inset-y-0 w-16 bg-gradient-to-r from-transparent via-indigo-400/30 to-transparent" />
           <p className="relative flex items-center gap-2 text-sm font-medium text-indigo-700 dark:text-indigo-300">
             <Shield className="enc-pulse h-4 w-4" />
-            Encrypted: Your bet amount will be hidden on-chain.
+            {statusHint}
           </p>
         </div>
       </div>
@@ -95,7 +103,7 @@ export function BetPlacement({
         className="flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-500 px-4 py-3 text-sm font-semibold text-white transition hover:scale-[1.02] hover:bg-indigo-600 disabled:cursor-not-allowed disabled:opacity-50"
       >
         <Lock className="h-4 w-4" />
-        {alreadyBet ? "BET ALREADY PLACED" : isSubmitting ? "ENCRYPTING TRANSACTION..." : "CONFIRM ENCRYPTED BET"}
+        {submitLabel}
       </button>
     </div>
   );
