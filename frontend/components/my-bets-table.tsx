@@ -46,7 +46,7 @@ export function MyBetsTable({ rows }: MyBetsTableProps) {
         <div className="mx-auto inline-flex h-16 w-16 items-center justify-center rounded-full border border-white/6 bg-white/[0.03] text-2xl">
           🗳️
         </div>
-        <h2 className="mt-6 font-['Sora'] text-2xl font-bold text-white">No positions yet</h2>
+        <h2 className="font-display mt-6 text-2xl font-bold text-white">No positions yet</h2>
         <p className="mx-auto mt-3 max-w-sm text-sm leading-7 text-white/55">
           You have not placed a confidential position yet. Explore the live market board and take your first side.
         </p>

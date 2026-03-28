@@ -387,7 +387,7 @@ export default function MarketDetailPage() {
               <div className="flex items-center justify-between gap-4">
                 <div>
                   <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--primary)]">Optimistic Resolver</div>
-                  <h2 className="mt-2 font-['Sora'] text-2xl font-bold text-white">Settlement control plane</h2>
+                  <h2 className="font-display mt-2 text-2xl font-bold text-white">Settlement control plane</h2>
                 </div>
                 <Gavel className="h-8 w-8 text-white/25" />
               </div>
@@ -466,7 +466,7 @@ export default function MarketDetailPage() {
                     <div className="mt-5 space-y-3">
                       <div className="rounded-[1.25rem] border border-emerald-400/18 bg-emerald-400/10 p-4">
                         <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-300">Official result</div>
-                        <div className="mt-2 font-['Sora'] text-2xl font-bold text-white">{currentOutcomeLabel}</div>
+                        <div className="font-display mt-2 text-2xl font-bold text-white">{currentOutcomeLabel}</div>
                       </div>
                       {hasPosition ? (
                         <button type="button" onClick={onClaim} className="vm-primary-btn justify-center">
@@ -479,7 +479,7 @@ export default function MarketDetailPage() {
 
                 <div className="rounded-[1.5rem] border border-white/8 bg-black/20 p-5">
                   <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/35">Economic rules</div>
-                  <div className="mt-5 space-y-4 text-sm leading-7 text-white/68">
+                  <div className="mt-5 space-y-3 text-sm leading-7 text-white/68">
                     <div className="flex items-center justify-between gap-4 rounded-[1rem] border border-white/6 bg-white/[0.03] px-4 py-3">
                       <span>Oracle stake</span>
                       <span className="font-mono font-bold text-white">{oracleStake ? formatEther(oracleStake) : "0.01"} ETH</span>
@@ -522,7 +522,7 @@ export default function MarketDetailPage() {
               <div className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-white/6 text-[var(--primary)]">
                 <TrendingUp className="h-5 w-5" />
               </div>
-              <h3 className="mt-5 font-['Sora'] text-xl font-bold text-white">Betting Closed</h3>
+              <h3 className="font-display mt-5 text-xl font-bold text-white">Betting Closed</h3>
               <p className="mt-3 text-sm leading-7 text-white/62">
                 This market has reached its deadline and is no longer accepting new positions. Follow the settlement panel for resolution progress.
               </p>
@@ -533,10 +533,10 @@ export default function MarketDetailPage() {
             <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--primary)]">Your Position</div>
             {address ? (
               hasPosition ? (
-                <div className="mt-4 space-y-4">
+                <div className="mt-4 space-y-3">
                   <div className="rounded-[1.35rem] border border-[var(--primary)]/16 bg-[var(--primary)]/8 p-4">
                     <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--primary)]">Recovered outcome</div>
-                    <div className="mt-2 font-['Sora'] text-xl font-bold text-white">
+                    <div className="font-display mt-2 text-xl font-bold text-white">
                       {isDecrypting ? "Decrypting..." : decryptedPosition !== null ? labels[decryptedPosition] : "Encrypted"}
                     </div>
                   </div>
@@ -544,11 +544,10 @@ export default function MarketDetailPage() {
                     <div className="flex items-center justify-between rounded-[1.2rem] border border-white/6 bg-white/[0.03] px-4 py-3">
                       <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-white/35">Result</span>
                       <span
-                        className={`rounded-full border px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.16em] ${
-                          decryptedPosition === parsedMarket.outcome
+                        className={`rounded-full border px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.16em] ${decryptedPosition === parsedMarket.outcome
                             ? "border-emerald-400/18 bg-emerald-400/10 text-emerald-300"
                             : "border-rose-400/18 bg-rose-400/10 text-rose-300"
-                        }`}
+                          }`}
                       >
                         {decryptedPosition === parsedMarket.outcome ? "Won" : "Lost"}
                       </span>

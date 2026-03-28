@@ -149,7 +149,7 @@ export function MarketsDashboard() {
         <div className="grid gap-6 lg:grid-cols-[1fr_auto] lg:items-end">
           <div>
             <div className="relative">
-              <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35" />
+              {/* <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35" /> */}
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
@@ -197,7 +197,7 @@ export function MarketsDashboard() {
       {!filtered.length ? (
         <div className="vm-card p-16 text-center">
           <div className="mx-auto inline-flex h-16 w-16 items-center justify-center rounded-full border border-white/6 bg-white/[0.03] text-2xl">🔒</div>
-          <h2 className="mt-6 font-['Sora'] text-2xl font-bold text-white">No markets found</h2>
+          <h2 className="font-display mt-6 text-2xl font-bold text-white">No markets found</h2>
           <p className="mx-auto mt-3 max-w-md text-sm leading-7 text-white/55">
             Your current filters returned nothing. Try another category, clear the search, or create a new market.
           </p>

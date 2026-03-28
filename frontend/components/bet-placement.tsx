@@ -34,7 +34,7 @@ export function BetPlacement({
   return (
     <div className="vm-card space-y-6 p-6 md:p-7">
       <div className="flex items-center justify-between">
-        <h2 className="font-['Sora'] text-xl font-bold text-white">Place Confidential Bet</h2>
+        <h2 className="font-display text-xl font-bold text-white">Place Confidential Bet</h2>
         <span className="vm-category-pill border-[var(--primary)]/20 bg-[var(--primary)]/10 text-[var(--primary)]">
           <Lock className="h-3.5 w-3.5" />
           Encrypted
@@ -59,7 +59,7 @@ export function BetPlacement({
               <div className="flex items-center justify-between">
                 <div>
                   <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/35">Outcome</div>
-                  <div className="mt-2 font-['Sora'] text-lg font-bold text-white">{label}</div>
+                  <div className="font-display mt-2 text-lg font-bold text-white">{label}</div>
                 </div>
                 <span
                   className={`inline-flex h-7 w-7 items-center justify-center rounded-full border ${

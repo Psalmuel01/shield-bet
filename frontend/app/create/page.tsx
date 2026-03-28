@@ -168,9 +168,8 @@ export default function CreateMarketPage() {
                       setMarketType(0);
                       setOutcomeLabels(["YES", "NO"]);
                     }}
-                    className={`vm-soft-btn justify-center py-4 ${
-                      marketType === 0 ? "border-[var(--primary)]/24 bg-[var(--primary)]/12 text-[var(--primary)]" : ""
-                    }`}
+                    className={`vm-soft-btn justify-center py-4 ${marketType === 0 ? "border-[var(--primary)]/24 bg-[var(--primary)]/12 text-[var(--primary)]" : ""
+                      }`}
                   >
                     Binary
                   </button>
@@ -180,9 +179,8 @@ export default function CreateMarketPage() {
                       setMarketType(1);
                       setOutcomeLabels(["Option 1", "Option 2"]);
                     }}
-                    className={`vm-soft-btn justify-center py-4 ${
-                      marketType === 1 ? "border-[var(--primary)]/24 bg-[var(--primary)]/12 text-[var(--primary)]" : ""
-                    }`}
+                    className={`vm-soft-btn justify-center py-4 ${marketType === 1 ? "border-[var(--primary)]/24 bg-[var(--primary)]/12 text-[var(--primary)]" : ""
+                      }`}
                   >
                     Categorical
                   </button>
@@ -273,7 +271,7 @@ export default function CreateMarketPage() {
             <div className="space-y-5">
               <div className="rounded-[1.75rem] border border-white/6 bg-white/[0.03] p-6">
                 <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--primary)]">Review</div>
-                <div className="mt-5 space-y-4">
+                <div className="mt-5 space-y-3">
                   <div>
                     <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/35">Question</div>
                     <div className="mt-2 text-sm font-semibold text-white/90">{question || "Your market question will appear here."}</div>
@@ -331,7 +329,7 @@ export default function CreateMarketPage() {
 
               {createdMarketId ? (
                 <div className="rounded-[1.75rem] border border-[var(--primary)]/18 bg-[var(--primary)]/8 p-6 text-center">
-                  <div className="font-['Sora'] text-xl font-bold text-white">Market created successfully</div>
+                  <div className="font-display text-xl font-bold text-white">Market created successfully</div>
                   <p className="mt-2 text-sm leading-7 text-white/68">
                     Your new market is live. Open it now or share it immediately.
                   </p>

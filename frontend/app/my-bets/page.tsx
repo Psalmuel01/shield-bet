@@ -203,7 +203,7 @@ export default function MyBetsPage() {
           <div className="mx-auto inline-flex h-16 w-16 items-center justify-center rounded-full border border-white/6 bg-white/[0.03] text-2xl">
             🔐
           </div>
-          <h2 className="mt-6 font-['Sora'] text-2xl font-bold text-white">Connect your wallet</h2>
+          <h2 className="font-display mt-6 text-2xl font-bold text-white">Connect your wallet</h2>
           <p className="mx-auto mt-3 max-w-md text-sm leading-7 text-white/55">
             Your portfolio is tied to the wallet that placed each market position. Connect it to recover your confidential side selections locally.
           </p>

@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Sora:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
 @import "tailwindcss";
 @source "../app/**/*.{js,ts,jsx,tsx,mdx}";
 @source "../components/**/*.{js,ts,jsx,tsx,mdx}";
@@ -66,7 +66,7 @@ body {
   background: var(--page-bg);
   background-attachment: fixed;
   color: hsl(var(--foreground));
-  font-family: "Inter", system-ui, sans-serif;
+  font-family: "Bricolage Grotesque", system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -77,7 +77,7 @@ h3,
 h4,
 h5,
 h6 {
-  font-family: "Sora", "Inter", sans-serif;
+  font-family: "Bricolage Grotesque", system-ui, sans-serif;
   letter-spacing: -0.04em;
 }
 
@@ -85,6 +85,10 @@ code,
 .font-mono,
 .font-mono-ui {
   font-family: "JetBrains Mono", monospace;
+}
+
+.font-display {
+  font-family: "Bricolage Grotesque", system-ui, sans-serif;
 }
 
 button:not(:disabled),
@@ -250,7 +254,7 @@ textarea {
 
 .vm-brand__title {
   display: block;
-  font-family: "Sora", sans-serif;
+  font-family: "Bricolage Grotesque", system-ui, sans-serif;
   font-size: 1.05rem;
   font-weight: 700;
   color: #fff;

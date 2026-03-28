@@ -16,7 +16,7 @@ import {
   TrendingUp,
   Sparkles
 } from "lucide-react";
-import { ThemeToggle } from "@/components/theme-toggle";
+// import { ThemeToggle } from "@/components/theme-toggle";
 import { InteractiveLink } from "@/components/interactive-link";
 import { shieldBetConfig } from "@/lib/contract";
 
@@ -91,75 +91,79 @@ function SidebarContent({ collapsed, onToggle, onNavigate }: { collapsed: boolea
   );
 
   return (
-    <div className={`vm-sidebar ${collapsed ? "is-collapsed" : ""}`}>
-      <div className="vm-sidebar__brand">
-        <InteractiveLink href="/" className="vm-brand" pendingClassName="opacity-70" onClick={onNavigate}>
-          <span className="vm-brand__mark">
-            <Shield className="h-5 w-5" />
-          </span>
-          {!collapsed ? (
-            <span className="min-w-0">
-              <span className="vm-brand__title">ShieldBet</span>
-              <span className="vm-brand__subtitle">Confidential markets</span>
+    <div className={`vm-sidebar ${collapsed ? "is-collapsed" : ""} flex flex-col justify-between`}>
+      <div>
+        <div className="vm-sidebar__brand">
+          <InteractiveLink href="/" className="vm-brand" pendingClassName="opacity-70" onClick={onNavigate}>
+            <span className="vm-brand__mark">
+              <Shield className="h-5 w-5" />
             </span>
-          ) : null}
-        </InteractiveLink>
+            {!collapsed ? (
+              <span className="min-w-0">
+                <span className="vm-brand__title">ShieldBet</span>
+                <span className="vm-brand__subtitle">Confidential markets</span>
+              </span>
+            ) : null}
+          </InteractiveLink>
+        </div>
+
+        <nav className="vm-sidebar__nav">
+          {navItems.map((item) => {
+            const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+            const Icon = item.icon;
+            return (
+              <InteractiveLink
+                key={item.href}
+                href={item.href}
+                onClick={onNavigate}
+                pendingClassName="opacity-80"
+                className={`vm-sidebar__link ${active ? "is-active" : ""}`}
+              >
+                <Icon className="h-5 w-5 shrink-0" />
+                {!collapsed ? <span>{item.label}</span> : null}
+              </InteractiveLink>
+            );
+          })}
+        </nav>
       </div>
 
-      <nav className="vm-sidebar__nav">
-        {navItems.map((item) => {
-          const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
-          const Icon = item.icon;
-          return (
-            <InteractiveLink
-              key={item.href}
-              href={item.href}
-              onClick={onNavigate}
-              pendingClassName="opacity-80"
-              className={`vm-sidebar__link ${active ? "is-active" : ""}`}
-            >
-              <Icon className="h-5 w-5 shrink-0" />
-              {!collapsed ? <span>{item.label}</span> : null}
-            </InteractiveLink>
-          );
-        })}
-      </nav>
-
-      {!collapsed ? (
-        <div className="vm-sidebar__stats">
-          <div className="vm-stats-card">
-            <div className="vm-stats-card__head">
-              <div className="vm-stats-card__icon">
-                <TrendingUp className="h-4 w-4" />
+      <div>
+        {!collapsed ? (
+          <div className="vm-sidebar__stats">
+            <div className="vm-stats-card">
+              <div className="vm-stats-card__head">
+                <div className="vm-stats-card__icon">
+                  <TrendingUp className="h-4 w-4" />
+                </div>
+                <span>Network Pulse</span>
               </div>
-              <span>Network Pulse</span>
-            </div>
-            <div className="vm-stats-card__rows">
-              <div className="vm-stats-card__row">
-                <span>Markets</span>
-                <strong>{stats.marketCount}</strong>
-              </div>
-              <div className="vm-stats-card__row">
-                <span>Wallet</span>
-                <strong>{stats.balanceLabel}</strong>
-              </div>
-              <div className="vm-stats-card__row">
-                <span>Privacy</span>
-                <strong>fhEVM + Lit</strong>
+              <div className="vm-stats-card__rows">
+                <div className="vm-stats-card__row">
+                  <span>Markets</span>
+                  <strong>{stats.marketCount}</strong>
+                </div>
+                <div className="vm-stats-card__row">
+                  <span>Wallet</span>
+                  <strong>{stats.balanceLabel}</strong>
+                </div>
+                <div className="vm-stats-card__row">
+                  <span>Privacy</span>
+                  <strong>fhEVM + Lit</strong>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      ) : null}
+        ) : null}
 
-      <div className="vm-sidebar__footer">
-        <div className={`flex items-center gap-2 ${collapsed ? "justify-center" : ""}`}>
-          <ShellWalletButton collapsed={collapsed} />
-          {!collapsed ? <ThemeToggle /> : null}
+        <div className="vm-sidebar__footer">
+          <div className={`flex items-center gap-2 ${collapsed ? "justify-center" : ""}`}>
+            <ShellWalletButton collapsed={collapsed} />
+            {/* {!collapsed ? <ThemeToggle /> : null} */}
+          </div>
+          <button type="button" onClick={onToggle} className="vm-collapse-btn">
+            {collapsed ? <ChevronRight className="h-4 w-4" /> : <><ChevronLeft className="h-4 w-4" /><span>Collapse</span></>}
+          </button>
         </div>
-        <button type="button" onClick={onToggle} className="vm-collapse-btn">
-          {collapsed ? <ChevronRight className="h-4 w-4" /> : <><ChevronLeft className="h-4 w-4" /><span>Collapse</span></>}
-        </button>
       </div>
     </div>
   );
@@ -189,12 +193,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <span className="vm-brand__subtitle">Confidential markets</span>
           </span>
         </InteractiveLink>
-        <div className="flex items-center gap-2">
+        {/* <div className="flex items-center gap-2">
           <ThemeToggle />
           <button type="button" className="vm-mobile-menu-btn" onClick={() => setMobileOpen(true)}>
             <Menu className="h-5 w-5" />
           </button>
-        </div>
+        </div> */}
       </div>
 
       <div className="hidden lg:block">

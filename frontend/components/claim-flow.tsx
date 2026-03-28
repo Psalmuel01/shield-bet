@@ -82,7 +82,7 @@ export function ClaimFlow({ open, onClose, payoutWei, onConfirmClaim, claimType 
             <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--primary)]">
               {isRefund ? "Claim Refund" : "Claim Winnings"}
             </div>
-            <h3 className="mt-2 font-['Sora'] text-2xl font-bold text-white">
+            <h3 className="font-display mt-2 text-2xl font-bold text-white">
               {isRefund ? "Refund Verification Flow" : "Claim Verification Flow"}
             </h3>
           </div>
@@ -92,7 +92,7 @@ export function ClaimFlow({ open, onClose, payoutWei, onConfirmClaim, claimType 
           </button>
         </div>
 
-        <div className="space-y-4">
+        <div className="space-y-3">
           <div className="rounded-[1.35rem] border border-white/6 bg-white/[0.03] p-4">
             <p className="flex items-center gap-2 text-sm font-semibold text-white">
               <Lock className="h-4 w-4 text-[var(--primary)]" />
