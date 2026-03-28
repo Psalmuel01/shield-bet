@@ -1,9 +1,9 @@
 "use client";
 
-import Link from "next/link";
 import { Lock, ShieldAlert } from "lucide-react";
 import { useMemo } from "react";
 import { formatEther } from "viem";
+import { InteractiveLink } from "@/components/interactive-link";
 import { cidToExplorer, formatDeadline, getCountdown } from "@/lib/format";
 import { getEncryptedBandCount, getMarketStatus, MarketCategory, renderEncryptedDots } from "@/lib/market-ui";
 
@@ -55,9 +55,13 @@ export function MarketCard({ marketId, question, deadline, outcome, resolved, ca
         <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusStyles[status]}`}>{status}</span>
       </div>
 
-      <Link href={`/markets/${marketId}`} className="block">
+      <InteractiveLink
+        href={`/markets/${marketId}`}
+        pendingClassName="opacity-85"
+        className="block transition group-data-[pending=true]:opacity-85"
+      >
         <h2 className="line-clamp-2 text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-100">{question}</h2>
-      </Link>
+      </InteractiveLink>
 
       <div className="mt-3 space-y-1">
         {resolved ? (
@@ -105,18 +109,20 @@ export function MarketCard({ marketId, question, deadline, outcome, resolved, ca
           </>
         ) : (
           <>
-            <Link
+            <InteractiveLink
               href={`/markets/${marketId}?side=yes`}
+              pendingClassName="scale-[0.99] opacity-85"
               className="rounded-lg bg-emerald-500 px-3 py-2 text-center text-sm font-semibold text-white transition hover:scale-[1.02] hover:bg-emerald-600"
             >
               YES
-            </Link>
-            <Link
+            </InteractiveLink>
+            <InteractiveLink
               href={`/markets/${marketId}?side=no`}
+              pendingClassName="scale-[0.99] opacity-85"
               className="rounded-lg bg-rose-500 px-3 py-2 text-center text-sm font-semibold text-white transition hover:scale-[1.02] hover:bg-rose-600"
             >
               NO
-            </Link>
+            </InteractiveLink>
           </>
         )}
       </div>

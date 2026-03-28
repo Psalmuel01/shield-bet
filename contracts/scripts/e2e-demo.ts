@@ -16,16 +16,9 @@ async function main() {
   const [owner] = await ethers.getSigners();
   const provider = ethers.provider;
   const shieldBet = ShieldBet__factory.connect(contractAddress, owner);
+  const network = await provider.getNetwork();
 
   await hre.fhevm.initializeCLIApi();
-
-  const alice = ethers.Wallet.createRandom().connect(provider);
-  const bob = ethers.Wallet.createRandom().connect(provider);
-
-  const fundingAmount = parseEther("0.0004");
-  console.log("Funding ephemeral bettors...");
-  await (await owner.sendTransaction({ to: alice.address, value: fundingAmount })).wait();
-  await (await owner.sendTransaction({ to: bob.address, value: fundingAmount })).wait();
 
   const latestBlock = await provider.getBlock("latest");
   if (!latestBlock) {
@@ -69,37 +62,22 @@ async function main() {
   }
   console.log(`Market created: ${marketId.toString()}`);
 
-  async function encryptBet(bettorAddress: string, outcome: number, amount: bigint) {
+  async function encryptBetSide(bettorAddress: string, outcome: number) {
     const input = hre.fhevm.createEncryptedInput(contractAddress, bettorAddress);
     input.add8(outcome);
-    input.add64(amount);
     return input.encrypt();
   }
 
-  const aliceAmount = parseEther("0.0001");
-  const bobAmount = parseEther("0.0002");
+  const ownerStake = parseEther("0.0001");
 
-  console.log("Placing encrypted YES bet from alice...");
-  const aliceEncrypted = await encryptBet(alice.address, 1, aliceAmount);
-  const alicePlaceBetTx = await shieldBet.placeBet.populateTransaction(
-    marketId,
-    aliceEncrypted.handles[0],
-    aliceEncrypted.handles[1],
-    aliceEncrypted.inputProof,
-    { value: aliceAmount }
-  );
-  await (await alice.sendTransaction({ ...alicePlaceBetTx, to: contractAddress, value: aliceAmount })).wait();
-
-  console.log("Placing encrypted NO bet from bob...");
-  const bobEncrypted = await encryptBet(bob.address, 2, bobAmount);
-  const bobPlaceBetTx = await shieldBet.placeBet.populateTransaction(
-    marketId,
-    bobEncrypted.handles[0],
-    bobEncrypted.handles[1],
-    bobEncrypted.inputProof,
-    { value: bobAmount }
-  );
-  await (await bob.sendTransaction({ ...bobPlaceBetTx, to: contractAddress, value: bobAmount })).wait();
+  console.log("Placing encrypted YES bet from owner...");
+  const ownerEncrypted = await encryptBetSide(owner.address, 1);
+  await (
+    await shieldBet.placeBet(marketId, ownerEncrypted.handles[0], ownerEncrypted.inputProof, {
+      value: ownerStake,
+      gasLimit: 5_000_000n
+    })
+  ).wait();
 
   console.log("Waiting for market close...");
   while (true) {
@@ -108,29 +86,77 @@ async function main() {
     await new Promise((resolve) => setTimeout(resolve, 4_000));
   }
 
-  console.log("Resolving market YES and computing payout...");
-  await (await shieldBet.resolveMarket(marketId, 1)).wait();
-  await (await shieldBet.computeAndAssignPayout(marketId, alice.address, aliceAmount, aliceAmount)).wait();
+  const resolutionExpiry = BigInt(Math.floor(Date.now() / 1000) + 900);
+  const resolutionSignature = await owner.signTypedData(
+    {
+      name: "ShieldBet",
+      version: "1",
+      chainId: Number(network.chainId),
+      verifyingContract: contractAddress
+    },
+    {
+      ResolutionAuth: [
+        { name: "marketId", type: "uint256" },
+        { name: "outcome", type: "uint8" },
+        { name: "expiry", type: "uint256" }
+      ]
+    },
+    {
+      marketId,
+      outcome: 1,
+      expiry: resolutionExpiry
+    }
+  );
 
-  console.log("Claiming winnings from alice...");
-  const claimTx = await shieldBet.connect(alice).claimWinnings(marketId);
+  console.log("Resolving market YES with signer authorization and opening settlement data...");
+  await (await shieldBet.resolveMarketWithSig(marketId, 1, resolutionExpiry, resolutionSignature)).wait();
+  await (await shieldBet.openSettlementData(marketId, [owner.address])).wait();
+
+  const claimExpiry = BigInt(Math.floor(Date.now() / 1000) + 900);
+  const claimSignature = await owner.signTypedData(
+    {
+      name: "ShieldBet",
+      version: "1",
+      chainId: Number(network.chainId),
+      verifyingContract: contractAddress
+    },
+    {
+      ClaimAuth: [
+        { name: "marketId", type: "uint256" },
+        { name: "claimant", type: "address" },
+        { name: "resolvedOutcome", type: "uint8" },
+        { name: "totalWinningSide", type: "uint256" },
+        { name: "expiry", type: "uint256" }
+      ]
+    },
+    {
+      marketId,
+      claimant: owner.address,
+      resolvedOutcome: 1,
+      totalWinningSide: ownerStake,
+      expiry: claimExpiry
+    }
+  );
+
+  console.log("Claiming winnings from owner...");
+  const claimTx = await shieldBet.claimWinningsWithSig(marketId, ownerStake, claimExpiry, claimSignature);
   const claimReceipt = await claimTx.wait();
   if (!claimReceipt || claimReceipt.status !== 1) {
     throw new Error("Claim transaction failed");
   }
 
-  console.log("Attempting losing claim from bob (expected failure)...");
+  console.log("Attempting second claim from owner (expected failure)...");
   try {
-    await shieldBet.connect(bob).claimWinnings(marketId);
-    throw new Error("Bob claim unexpectedly succeeded");
+    await shieldBet.claimWinningsWithSig(marketId, ownerStake, claimExpiry, claimSignature);
+    throw new Error("Second owner claim unexpectedly succeeded");
   } catch (error) {
-    console.log("Bob claim reverted as expected.");
+    console.log("Second claim reverted as expected.");
   }
 
   console.log("Live demo completed successfully.");
   console.log(`Contract: ${contractAddress}`);
   console.log(`Market ID: ${marketId.toString()}`);
-  console.log(`Winner: ${alice.address}`);
+  console.log(`Winner: ${owner.address}`);
   console.log(`Claim tx: ${claimReceipt.hash}`);
 }
 

@@ -38,6 +38,32 @@ type BetFlowStage = "idle" | "preparing" | "encrypting" | "wallet" | "confirming
 type SettlementLoadingState = "idle" | "opening" | "loading-plan" | "assigning" | "cancelling";
 
 type PositionLabel = "YES" | "NO" | "Encrypted";
+type ClaimPreviewState = {
+  marketId: string;
+  account: `0x${string}`;
+  eligible: boolean;
+  mode: "refund" | "signed-winner" | "legacy-assigned" | "none";
+  expectedPayoutWei: string;
+  totalWinningSideWei: string;
+  resolvedOutcome: string;
+  checks: string[];
+  reason?: string;
+  settlementOpened?: boolean;
+  legacyAssigned?: boolean;
+};
+
+type ClaimAuthResponse = {
+  marketId: string;
+  account: `0x${string}`;
+  expectedPayoutWei: string;
+  totalWinningSideWei: string;
+  resolvedOutcome: string;
+  expiry: string;
+  signature: `0x${string}`;
+  signer: `0x${string}`;
+  checks: string[];
+  reason?: string;
+};
 
 function formatEthLabel(value: bigint) {
   return `${Number(formatEther(value)).toFixed(4)} ETH`;
@@ -69,6 +95,8 @@ export default function MarketBetPage() {
   const [settlementPlan, setSettlementPlan] = useState<SettlementPlanView | null>(null);
   const [settlementLoading, setSettlementLoading] = useState<SettlementLoadingState>("idle");
   const [localPosition, setLocalPosition] = useState<PositionLabel>("Encrypted");
+  const [claimPreview, setClaimPreview] = useState<ClaimPreviewState | null>(null);
+  const [claimPreviewLoading, setClaimPreviewLoading] = useState(false);
 
   const { address, chainId } = useAccount();
   const normalizedAddress = address ? getAddress(address) : null;
@@ -206,9 +234,18 @@ export default function MarketBetPage() {
             payout: claimQuote[0].toString(),
             eligible: claimQuote[1]
           }
+        : null,
+      claimPreview: claimPreview
+        ? {
+            mode: claimPreview.mode,
+            eligible: claimPreview.eligible,
+            expectedPayoutWei: claimPreview.expectedPayoutWei,
+            totalWinningSideWei: claimPreview.totalWinningSideWei,
+            reason: claimPreview.reason || ""
+          }
         : null
     });
-  }, [marketId, address, hasPosition, stakeAmountWei, claimQuote]);
+  }, [marketId, address, hasPosition, stakeAmountWei, claimQuote, claimPreview]);
 
   useEffect(() => {
     const bet = getLocalBet(marketId, address);
@@ -271,6 +308,58 @@ export default function MarketBetPage() {
     };
   }, [encryptedOutcomeHandle, hasPosition, marketId, normalizedAddress, walletClient]);
 
+  useEffect(() => {
+    if (!normalizedAddress || !marketData) {
+      setClaimPreview(null);
+      return;
+    }
+
+    const parsed = decodeMarketView(marketData);
+    if (!parsed?.resolved) {
+      setClaimPreview(null);
+      return;
+    }
+
+    const userAddress = normalizedAddress;
+    let cancelled = false;
+
+    async function loadPreview() {
+      try {
+        setClaimPreviewLoading(true);
+        const response = await fetch(
+          `/api/markets/${marketId.toString()}/claim-preview?account=${encodeURIComponent(userAddress)}`,
+          { cache: "no-store" }
+        );
+        const body = (await response.json()) as ClaimPreviewState | { error?: string };
+        if (!response.ok || !("eligible" in body)) {
+          throw new Error(("error" in body && body.error) || "Unable to prepare claim preview");
+        }
+        if (!cancelled) {
+          setClaimPreview(body);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setClaimPreview(null);
+          logWarn("market-detail", "claim preview unavailable", {
+            marketId: marketId.toString(),
+            account: userAddress,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+      } finally {
+        if (!cancelled) {
+          setClaimPreviewLoading(false);
+        }
+      }
+    }
+
+    void loadPreview();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [marketData, marketId, normalizedAddress, hash]);
+
   if (!marketParam || !marketData) {
     return <p className="subtle">Loading market...</p>;
   }
@@ -297,8 +386,9 @@ export default function MarketBetPage() {
   const marketResolvedYesNo = resolved && (outcome === 1 || outcome === 2);
   const marketCancelled = resolved && outcome === 3;
   const alreadyBet = Boolean(hasPosition);
-  const claimPayout = claimQuote?.[0] || 0n;
-  const eligibleToClaim = claimQuote?.[1] || false;
+  const previewPayout = claimPreview ? BigInt(claimPreview.expectedPayoutWei) : 0n;
+  const claimPayout = claimPreview ? previewPayout : claimQuote?.[0] || 0n;
+  const eligibleToClaim = claimPreview?.eligible || claimQuote?.[1] || false;
 
   const encryptedVolumeBands = getEncryptedBandCount(marketId, 6, 10);
   const participantBands = getEncryptedBandCount(marketId + 11n, 3, 8);
@@ -358,6 +448,7 @@ export default function MarketBetPage() {
       | "computeAndAssignPayouts"
       | "openSettlementData"
       | "claimWinnings"
+      | "claimWinningsWithSig"
       | "cancelUnresolvedMarket",
     args: readonly unknown[],
     value?: bigint
@@ -485,6 +576,7 @@ export default function MarketBetPage() {
     if (!address) throw new Error("Connect wallet first");
     if (chainId !== expectedChainId) throw new Error(`Wrong network. Switch wallet to chain ID ${expectedChainId}.`);
     const normalizedAccount = normalizedAddress || getAddress(address);
+    const activeClaimPreview = claimPreview;
 
     let litExecution:
       | {
@@ -502,6 +594,9 @@ export default function MarketBetPage() {
         }
       | null = null;
 
+    const isSignedWinnerClaim = Boolean(activeClaimPreview && activeClaimPreview.mode === "signed-winner" && activeClaimPreview.eligible);
+    const expectedPayoutWei = activeClaimPreview?.expectedPayoutWei || claimPayout.toString();
+
     if (litActionCid && marketResolvedYesNo) {
       if (!walletClient) {
         throw new Error("Wallet signer not ready for Lit action execution");
@@ -514,7 +609,7 @@ export default function MarketBetPage() {
         account: normalizedAccount,
         actionCid: litActionCid,
         resolvedOutcome: outcome.toString(),
-        expectedPayoutWei: claimPayout.toString()
+        expectedPayoutWei
       });
       try {
         litExecution = await runLitClaimAction({
@@ -522,7 +617,7 @@ export default function MarketBetPage() {
           marketId: marketId.toString(),
           account: normalizedAccount,
           resolvedOutcome: outcome.toString(),
-          expectedPayoutWei: claimPayout.toString(),
+          expectedPayoutWei,
           walletClient
         });
         logInfo("market-detail", "claim lit action complete", {
@@ -546,17 +641,74 @@ export default function MarketBetPage() {
       }
     }
 
-    logInfo("market-detail", "claim submit tx", {
-      marketId: marketId.toString(),
-      account: normalizedAccount
-    });
-    const claimGasOverrides = await getGasOverrides("claimWinnings", [marketId] as const);
-    const txHash = await writeContractAsync({
-      ...shieldBetConfig,
-      functionName: "claimWinnings",
-      args: [marketId],
-      ...claimGasOverrides
-    });
+    let txHash: `0x${string}`;
+    let claimChecks: string[] = [];
+    let payoutForVerification = expectedPayoutWei;
+
+    if (isSignedWinnerClaim) {
+      setStatusMessage("Preparing signed winner claim...");
+      const authResponse = await fetch(`/api/markets/${marketId.toString()}/claim-auth`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          account: normalizedAccount
+        })
+      });
+
+      const authBody = (await authResponse.json()) as
+        | ({ error?: string; preview?: ClaimPreviewState } & Partial<ClaimAuthResponse>)
+        | { error?: string };
+
+      if (
+        !authResponse.ok ||
+        !("signature" in authBody) ||
+        typeof authBody.signature !== "string" ||
+        !("expiry" in authBody) ||
+        typeof authBody.expiry !== "string" ||
+        !("totalWinningSideWei" in authBody) ||
+        typeof authBody.totalWinningSideWei !== "string"
+      ) {
+        throw new Error(authBody.error || "Unable to authorize winner claim");
+      }
+
+      const authSignature = authBody.signature;
+      const authExpiry = BigInt(authBody.expiry);
+      const authTotalWinningSideWei = BigInt(authBody.totalWinningSideWei);
+      claimChecks = authBody.checks || [];
+      payoutForVerification = authBody.expectedPayoutWei || expectedPayoutWei;
+      logInfo("market-detail", "claim auth issued", {
+        marketId: marketId.toString(),
+        account: normalizedAccount,
+        signer: authBody.signer,
+        expiry: authExpiry.toString(),
+        totalWinningSideWei: authTotalWinningSideWei.toString()
+      });
+
+      const claimGasOverrides = await getGasOverrides(
+        "claimWinningsWithSig",
+        [marketId, authTotalWinningSideWei, authExpiry, authSignature] as const
+      );
+      txHash = await writeContractAsync({
+        ...shieldBetConfig,
+        functionName: "claimWinningsWithSig",
+        args: [marketId, authTotalWinningSideWei, authExpiry, authSignature],
+        ...claimGasOverrides
+      });
+    } else {
+      logInfo("market-detail", "claim submit tx", {
+        marketId: marketId.toString(),
+        account: normalizedAccount
+      });
+      const claimGasOverrides = await getGasOverrides("claimWinnings", [marketId] as const);
+      txHash = await writeContractAsync({
+        ...shieldBetConfig,
+        functionName: "claimWinnings",
+        args: [marketId],
+        ...claimGasOverrides
+      });
+    }
     logInfo("market-detail", "claim tx submitted", { txHash });
 
     const receipt = await publicClient?.waitForTransactionReceipt({ hash: txHash });
@@ -573,7 +725,7 @@ export default function MarketBetPage() {
         marketId: marketId.toString(),
         account: normalizedAccount,
         txHash,
-        expectedPayoutWei: claimPayout.toString(),
+        expectedPayoutWei: payoutForVerification,
         litActionCid: litExecution?.actionCid || "",
         resolvedOutcome: outcome.toString(),
         litResponse: litExecution?.response ?? null,
@@ -592,6 +744,12 @@ export default function MarketBetPage() {
       throw new Error("Claim verification response was incomplete");
     }
 
+    const combinedChecks = Array.from(new Set([...(verifyBody.verifiedChecks || []), ...claimChecks]));
+    const result: ClaimConfirmation = {
+      ...verifyBody,
+      verifiedChecks: combinedChecks
+    };
+
     setStatusMessage(
       marketCancelled
         ? "Refund verified and submitted."
@@ -599,7 +757,7 @@ export default function MarketBetPage() {
           ? "Claim verified with Lit and submitted."
           : "Claim verified on-chain and submitted."
     );
-    return verifyBody;
+    return result;
   }
 
   async function resolveMarket() {
@@ -909,13 +1067,19 @@ export default function MarketBetPage() {
                       ? "This market was cancelled. Refunds are available to bettors who have not already claimed."
                       : "This market was cancelled. Only wallets with a stake in the market can claim a refund."
                   : eligibleToClaim
-                    ? "You have a claim quote available. Open the claim flow to verify and withdraw your payout."
+                    ? claimPreview?.mode === "signed-winner"
+                      ? "Your wallet is confirmed on the winning side. Open the claim flow to get a signed authorization and withdraw your payout."
+                      : "You have a claim quote available. Open the claim flow to verify and withdraw your payout."
                     : userOutcomeMatches === false
                       ? "Your recorded side did not match the resolved outcome for this market."
-                      : userOutcomeMatches === true
-                        ? "Your recorded side matched the resolved outcome. Claim becomes available once the payout is assigned."
+                    : userOutcomeMatches === true
+                        ? claimPreviewLoading
+                          ? "Checking your winner eligibility and payout quote..."
+                          : claimPreview?.reason || "Your recorded side matched the resolved outcome. Claim becomes available once settlement data is opened."
                         : alreadyBet
-                          ? "Your wallet has a position here. Claim becomes available after settlement data is opened and payouts are assigned."
+                          ? claimPreviewLoading
+                            ? "Checking your claim status..."
+                            : claimPreview?.reason || "Your wallet has a position here. Claim becomes available after settlement data is opened."
                           : "This market has been resolved. Claims are only available to wallets with assigned winnings."}
               </p>
               <button
@@ -974,7 +1138,7 @@ export default function MarketBetPage() {
               ) : marketResolvedYesNo ? (
                 <>
                   <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Settlement is a two-step flow in v1: anyone can open resolved-side data, then the owner assigns deterministic payouts from the generated plan.
+                    Settlement is a two-step flow in v1: anyone can open resolved-side data, then winners claim against a signer-authorized payout computed from their public stake and the winning-side total.
                   </p>
                   <div className="flex flex-wrap gap-2">
                     <button
@@ -993,16 +1157,6 @@ export default function MarketBetPage() {
                     >
                       {settlementLoading === "loading-plan" ? "Generating plan..." : "Generate payout plan"}
                     </button>
-                    {isOwner ? (
-                      <button
-                        type="button"
-                        onClick={assignPayoutsFromPlan}
-                        disabled={!settlementPlan || settlementLoading !== "idle"}
-                        className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {settlementLoading === "assigning" ? "Assigning payouts..." : "Assign winners in batch"}
-                      </button>
-                    ) : null}
                   </div>
                   {settlementPlan ? <SettlementPlanPanel plan={settlementPlan} /> : null}
                 </>
@@ -1071,6 +1225,12 @@ export default function MarketBetPage() {
                     Outcome: <span className="font-semibold">{localPosition}</span>
                   </p>
                 ) : null}
+                {claimPreviewLoading && resolved ? (
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Checking payout eligibility...</p>
+                ) : null}
+                {!claimPreviewLoading && claimPreview?.reason ? (
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{claimPreview.reason}</p>
+                ) : null}
                 {stakeLabel ? (
                   <p>
                     Stake: <span className="font-semibold">{stakeLabel}</span>
@@ -1102,7 +1262,11 @@ export default function MarketBetPage() {
                         ? "Refund unavailable"
                         : userOutcomeMatches === false
                           ? "Position lost"
-                          : "Awaiting payout assignment"
+                          : claimPreviewLoading
+                            ? "Checking claim status..."
+                            : claimPreview?.reason?.includes("Settlement data")
+                              ? "Awaiting settlement opening"
+                              : "Claim unavailable"
                     : "Claim available after resolution"}
                 </button>
               </div>

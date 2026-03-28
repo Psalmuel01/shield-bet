@@ -31,6 +31,72 @@ describe("ShieldBet", function () {
     await ethers.provider.send("evm_mine", []);
   }
 
+  async function signResolutionAuth(
+    shieldBetAddress: string,
+    signer: Awaited<ReturnType<typeof ethers.getSigners>>[number],
+    marketId: bigint,
+    outcome: number,
+    expiry: bigint
+  ) {
+    const network = await ethers.provider.getNetwork();
+    return signer.signTypedData(
+      {
+        name: "ShieldBet",
+        version: "1",
+        chainId: Number(network.chainId),
+        verifyingContract: shieldBetAddress
+      },
+      {
+        ResolutionAuth: [
+          { name: "marketId", type: "uint256" },
+          { name: "outcome", type: "uint8" },
+          { name: "expiry", type: "uint256" }
+        ]
+      },
+      {
+        marketId,
+        outcome,
+        expiry
+      }
+    );
+  }
+
+  async function signClaimAuth(
+    shieldBetAddress: string,
+    signer: Awaited<ReturnType<typeof ethers.getSigners>>[number],
+    marketId: bigint,
+    claimant: string,
+    resolvedOutcome: number,
+    totalWinningSide: bigint,
+    expiry: bigint
+  ) {
+    const network = await ethers.provider.getNetwork();
+    return signer.signTypedData(
+      {
+        name: "ShieldBet",
+        version: "1",
+        chainId: Number(network.chainId),
+        verifyingContract: shieldBetAddress
+      },
+      {
+        ClaimAuth: [
+          { name: "marketId", type: "uint256" },
+          { name: "claimant", type: "address" },
+          { name: "resolvedOutcome", type: "uint8" },
+          { name: "totalWinningSide", type: "uint256" },
+          { name: "expiry", type: "uint256" }
+        ]
+      },
+      {
+        marketId,
+        claimant,
+        resolvedOutcome,
+        totalWinningSide,
+        expiry
+      }
+    );
+  }
+
   it("creates markets and anchors metadata CID", async function () {
     const { shieldBet, alice } = await deployFixture();
     const deadline = BigInt((await ethers.provider.getBlock("latest"))!.timestamp + 3600);
@@ -141,6 +207,71 @@ describe("ShieldBet", function () {
       .revertedWithCustomError(shieldBet, "InvalidWinningTotals");
   });
 
+  it("allows permissionless resolution with a valid resolver signature", async function () {
+    const { shieldBet, owner, alice } = await deployFixture();
+    const shieldBetAddress = await shieldBet.getAddress();
+    const deadline = BigInt((await ethers.provider.getBlock("latest"))!.timestamp + 3600);
+
+    await shieldBet.connect(owner).createMarket("Signed resolution test", deadline);
+    await advancePastDeadline(deadline);
+
+    const expiry = deadline + 600n;
+    const signature = await signResolutionAuth(shieldBetAddress, owner, 1n, 1, expiry);
+
+    await expect(shieldBet.connect(alice).resolveMarketWithSig(1, 1, expiry, signature))
+      .to.emit(shieldBet, "MarketResolved")
+      .withArgs(1n, 1);
+
+    await expect(shieldBet.connect(alice).resolveMarketWithSig(1, 1, expiry, signature)).to.be.revertedWithCustomError(
+      shieldBet,
+      "MarketAlreadyResolved"
+    );
+  });
+
+  it("claims winnings with a settlement signature and computes payout on-chain", async function () {
+    const { shieldBet, owner, alice, bob } = await deployFixture();
+    const shieldBetAddress = await shieldBet.getAddress();
+    const deadline = BigInt((await ethers.provider.getBlock("latest"))!.timestamp + 3600);
+
+    await shieldBet.connect(owner).createMarket("Signed claim test", deadline);
+    await shieldBet.connect(owner).setMarketFeeBasisPoints(1, 250);
+
+    const aliceStake = 2_000_000_000_000_000_000n;
+    const bobStake = 1_000_000_000_000_000_000n;
+
+    const aliceBet = await encryptOutcome(shieldBetAddress, alice.address, 1);
+    await shieldBet.connect(alice).placeBet(1, aliceBet.encOutcome, aliceBet.inputProof, { value: aliceStake });
+
+    const bobBet = await encryptOutcome(shieldBetAddress, bob.address, 2);
+    await shieldBet.connect(bob).placeBet(1, bobBet.encOutcome, bobBet.inputProof, { value: bobStake });
+
+    await advancePastDeadline(deadline);
+    await shieldBet.connect(owner).resolveMarket(1, 1);
+
+    const totalWinningSide = aliceStake;
+    const expiry = deadline + 600n;
+    const claimSignature = await signClaimAuth(shieldBetAddress, owner, 1n, alice.address, 1, totalWinningSide, expiry);
+
+    const expectedPayout = ((aliceStake + bobStake) * 9750n) / 10_000n;
+
+    const quote = await shieldBet.connect(alice).quoteWinnerPayout(1, alice.address, totalWinningSide);
+    expect(quote[0]).to.equal(expectedPayout);
+    expect(quote[1]).to.equal(true);
+
+    const beforeBalance = await ethers.provider.getBalance(alice.address);
+    const claimTx = await shieldBet.connect(alice).claimWinningsWithSig(1, totalWinningSide, expiry, claimSignature);
+    const claimReceipt = await claimTx.wait();
+    const gasCost = (claimReceipt?.gasUsed || 0n) * (claimReceipt?.gasPrice || 0n);
+    const afterBalance = await ethers.provider.getBalance(alice.address);
+
+    expect(afterBalance + gasCost - beforeBalance).to.equal(expectedPayout);
+    expect(await shieldBet.hasClaimed(1, alice.address)).to.equal(true);
+
+    await expect(
+      shieldBet.connect(bob).claimWinningsWithSig(1, totalWinningSide, expiry, claimSignature)
+    ).to.be.revertedWithCustomError(shieldBet, "InvalidSettlementSignature");
+  });
+
   it("lets any caller open settlement data after resolution", async function () {
     const { shieldBet, owner, alice, bob, carol } = await deployFixture();
     const shieldBetAddress = await shieldBet.getAddress();
@@ -167,6 +298,9 @@ describe("ShieldBet", function () {
 
     expect(await shieldBet.settlementDataOpened(1, alice.address)).to.equal(true);
     expect(await shieldBet.settlementDataOpened(1, bob.address)).to.equal(true);
+    expect(await shieldBet.getSettlementWinnerHandle(1, alice.address)).to.not.equal(
+      "0x0000000000000000000000000000000000000000000000000000000000000000"
+    );
   });
 
   it("supports batch payout assignment and fee withdrawal", async function () {

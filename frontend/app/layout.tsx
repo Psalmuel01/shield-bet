@@ -17,8 +17,10 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body className="min-h-screen">
         <AppProviders>
-          <Header />
-          <main className="mx-auto w-full max-w-7xl px-4 py-6 md:px-6">{children}</main>
+          <div className="page-shell min-h-screen">
+            <Header />
+            <main className="mx-auto w-full max-w-7xl px-4 py-6 md:px-6 md:py-8">{children}</main>
+          </div>
         </AppProviders>
       </body>
     </html>

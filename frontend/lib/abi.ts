@@ -82,6 +82,20 @@ export const shieldBetAbi = [
   },
   {
     type: "function",
+    name: "resolverSigner",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }]
+  },
+  {
+    type: "function",
+    name: "settlementSigner",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }]
+  },
+  {
+    type: "function",
     name: "stakeAmounts",
     stateMutability: "view",
     inputs: [
@@ -89,6 +103,16 @@ export const shieldBetAbi = [
       { name: "account", type: "address" }
     ],
     outputs: [{ name: "", type: "uint256" }]
+  },
+  {
+    type: "function",
+    name: "hasClaimed",
+    stateMutability: "view",
+    inputs: [
+      { name: "marketId", type: "uint256" },
+      { name: "account", type: "address" }
+    ],
+    outputs: [{ name: "", type: "bool" }]
   },
   {
     type: "function",
@@ -167,6 +191,18 @@ export const shieldBetAbi = [
   },
   {
     type: "function",
+    name: "resolveMarketWithSig",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "marketId", type: "uint256" },
+      { name: "outcome", type: "uint8" },
+      { name: "expiry", type: "uint256" },
+      { name: "signature", type: "bytes" }
+    ],
+    outputs: []
+  },
+  {
+    type: "function",
     name: "cancelUnresolvedMarket",
     stateMutability: "nonpayable",
     inputs: [{ name: "marketId", type: "uint256" }],
@@ -232,9 +268,41 @@ export const shieldBetAbi = [
   },
   {
     type: "function",
+    name: "claimWinningsWithSig",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "marketId", type: "uint256" },
+      { name: "totalWinningSide", type: "uint256" },
+      { name: "expiry", type: "uint256" },
+      { name: "signature", type: "bytes" }
+    ],
+    outputs: []
+  },
+  {
+    type: "function",
     name: "getMyOutcome",
     stateMutability: "view",
     inputs: [{ name: "marketId", type: "uint256" }],
+    outputs: [{ name: "", type: "bytes32" }]
+  },
+  {
+    type: "function",
+    name: "getBetOutcomeHandle",
+    stateMutability: "view",
+    inputs: [
+      { name: "marketId", type: "uint256" },
+      { name: "bettor", type: "address" }
+    ],
+    outputs: [{ name: "", type: "bytes32" }]
+  },
+  {
+    type: "function",
+    name: "getSettlementWinnerHandle",
+    stateMutability: "view",
+    inputs: [
+      { name: "marketId", type: "uint256" },
+      { name: "bettor", type: "address" }
+    ],
     outputs: [{ name: "", type: "bytes32" }]
   },
   {
@@ -261,6 +329,20 @@ export const shieldBetAbi = [
     inputs: [
       { name: "marketId", type: "uint256" },
       { name: "user", type: "address" }
+    ],
+    outputs: [
+      { name: "payout", type: "uint256" },
+      { name: "eligible", type: "bool" }
+    ]
+  },
+  {
+    type: "function",
+    name: "quoteWinnerPayout",
+    stateMutability: "view",
+    inputs: [
+      { name: "marketId", type: "uint256" },
+      { name: "winner", type: "address" },
+      { name: "totalWinningSide", type: "uint256" }
     ],
     outputs: [
       { name: "payout", type: "uint256" },
