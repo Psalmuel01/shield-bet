@@ -8,7 +8,17 @@ export interface MyBetRow {
   question: string;
   position: string;
   amountWei: string;
-  status: "Open" | "Awaiting Resolution" | "Awaiting Payout" | "Won" | "Lost" | "Proposed" | "Disputed" | "Finalized" | "Claimed" | "Cancelled";
+  status:
+    | "Open"
+    | "Awaiting Resolution"
+    | "Awaiting Payout"
+    | "Won"
+    | "Lost"
+    | "Proposed"
+    | "Disputed"
+    | "Finalized"
+    | "Claimed"
+    | "Cancelled";
   canClaim: boolean;
   claimType?: "winnings" | "refund";
 }
@@ -21,20 +31,27 @@ function formatEthValue(valueWei: string) {
   return `${Number(formatEther(BigInt(valueWei || "0"))).toFixed(4)} ETH`;
 }
 
+function statusClass(status: MyBetRow["status"]) {
+  if (status === "Won" || status === "Claimed") return "border-emerald-400/20 bg-emerald-400/10 text-emerald-300";
+  if (status === "Disputed") return "border-rose-400/20 bg-rose-400/10 text-rose-300";
+  if (status === "Open" || status === "Awaiting Resolution") return "border-blue-400/20 bg-blue-400/10 text-blue-300";
+  if (status === "Proposed") return "border-amber-400/20 bg-amber-400/10 text-amber-300";
+  return "border-white/10 bg-white/6 text-white/72";
+}
+
 export function MyBetsTable({ rows }: MyBetsTableProps) {
   if (!rows.length) {
     return (
-      <div className="surface p-12 text-center space-y-3">
-        <div className="mx-auto h-16 w-16 rounded-full bg-slate-100 dark:bg-slate-900 flex items-center justify-center">
-          <span className="text-2xl">🗳️</span>
+      <div className="vm-card p-16 text-center">
+        <div className="mx-auto inline-flex h-16 w-16 items-center justify-center rounded-full border border-white/6 bg-white/[0.03] text-2xl">
+          🗳️
         </div>
-        <h2 className="text-xl font-bold dark:text-white">No positions yet</h2>
-        <p className="text-slate-500 max-w-xs mx-auto text-sm">You haven't placed any bets yet. Start by exploring active markets.</p>
-        <div className="pt-2">
-          <Link
-            href="/markets"
-            className="rounded-2xl bg-indigo-600 px-8 py-3 text-sm font-bold text-white transition-all hover:bg-indigo-500 hover:shadow-xl hover:shadow-indigo-500/20 active:scale-95"
-          >
+        <h2 className="mt-6 font-['Sora'] text-2xl font-bold text-white">No positions yet</h2>
+        <p className="mx-auto mt-3 max-w-sm text-sm leading-7 text-white/55">
+          You have not placed a confidential position yet. Explore the live market board and take your first side.
+        </p>
+        <div className="mt-6">
+          <Link href="/markets" className="vm-primary-btn inline-flex">
             Explore Markets
           </Link>
         </div>
@@ -43,60 +60,51 @@ export function MyBetsTable({ rows }: MyBetsTableProps) {
   }
 
   return (
-    <div className="surface overflow-hidden border border-slate-100 dark:border-slate-800">
-      <div className="overflow-x-auto">
-        <table className="min-w-full text-sm">
+    <div className="vm-card overflow-hidden">
+      <div className="vm-table-wrap">
+        <table className="vm-table">
           <thead>
-            <tr className="bg-slate-50 dark:bg-slate-950/50 text-left text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">
-              <th className="px-6 py-4">Market Details</th>
-              <th className="px-6 py-4">Your Position</th>
-              <th className="px-6 py-4">Staked Amount</th>
-              <th className="px-6 py-4">Current Status</th>
-              <th className="px-6 py-4 text-right">Actions</th>
+            <tr>
+              <th>Market</th>
+              <th>Your Position</th>
+              <th>Stake</th>
+              <th>Status</th>
+              <th className="text-right">Action</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+          <tbody>
             {rows.map((row) => (
-              <tr key={row.marketId.toString()} className="group hover:bg-slate-50/50 dark:hover:bg-slate-900/10 transition-colors">
-                <td className="px-6 py-5 max-w-md">
-                  <Link href={`/markets/${row.marketId}`} className="font-bold text-slate-900 dark:text-slate-100 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors line-clamp-2">
+              <tr key={row.marketId.toString()}>
+                <td className="max-w-md">
+                  <Link
+                    href={`/markets/${row.marketId}`}
+                    className="line-clamp-2 text-sm font-semibold text-white transition hover:text-[var(--primary)]"
+                  >
                     {row.question}
                   </Link>
-                  <p className="mt-1 text-[10px] font-mono text-slate-400">ID #{row.marketId.toString()}</p>
+                  <div className="mt-2 text-[10px] uppercase tracking-[0.18em] text-white/35">Market #{row.marketId.toString()}</div>
                 </td>
-                <td className="px-6 py-5">
-                  <span className={`inline-flex items-center rounded-lg px-2.5 py-1 text-xs font-bold leading-none ${row.position === "Encrypted" ? "bg-slate-100 text-slate-400" : "bg-indigo-50 text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300"
-                    }`}>
+                <td>
+                  <span
+                    className={`inline-flex rounded-full border px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.16em] ${
+                      row.position === "Encrypted"
+                        ? "border-white/10 bg-white/6 text-white/55"
+                        : "border-[var(--primary)]/20 bg-[var(--primary)]/10 text-[var(--primary)]"
+                    }`}
+                  >
                     {row.position}
                   </span>
                 </td>
-                <td className="px-6 py-5 font-mono font-bold text-slate-700 dark:text-slate-300">
-                  {formatEthValue(row.amountWei)}
-                </td>
-                <td className="px-6 py-5">
-                  <span className={`inline-flex items-center rounded-full px-3 py-1 text-[10px] font-bold uppercase tracking-wider ${row.status === "Open" ? "bg-emerald-100 text-emerald-700" :
-                      row.status === "Won" || row.status === "Claimed" ? "bg-indigo-100 text-indigo-700" :
-                        "bg-slate-100 text-slate-500"
-                    }`}>
+                <td className="font-mono text-sm font-bold text-white">{formatEthValue(row.amountWei)}</td>
+                <td>
+                  <span className={`inline-flex rounded-full border px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.16em] ${statusClass(row.status)}`}>
                     {row.status}
                   </span>
                 </td>
-                <td className="px-6 py-5 text-right">
-                  {row.canClaim ? (
-                    <Link
-                      href={`/markets/${row.marketId}`}
-                      className="inline-flex rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-indigo-500/10 transition-all hover:bg-indigo-500 hover:scale-105 active:scale-95"
-                    >
-                      {row.claimType === "refund" ? "Claim Refund" : "Withdraw Payout"}
-                    </Link>
-                  ) : (
-                    <Link
-                      href={`/markets/${row.marketId}`}
-                      className="inline-flex rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-600 transition-all hover:bg-slate-50 dark:border-slate-800 dark:text-slate-400 dark:hover:bg-slate-900"
-                    >
-                      Manage
-                    </Link>
-                  )}
+                <td className="text-right">
+                  <Link href={`/markets/${row.marketId}`} className={row.canClaim ? "vm-primary-btn inline-flex min-h-0 px-4 py-2" : "vm-secondary-btn inline-flex min-h-0 px-4 py-2"}>
+                    {row.canClaim ? (row.claimType === "refund" ? "Claim Refund" : "Claim") : "View"}
+                  </Link>
                 </td>
               </tr>
             ))}

@@ -22,20 +22,21 @@ function WalletLayer({ children }: { children: React.ReactNode }) {
   const { resolvedTheme } = useTheme();
 
   const theme = useMemo(() => {
-    if (resolvedTheme === "dark") {
-      return darkTheme({
-        accentColor: "#6366F1",
-        accentColorForeground: "#ffffff",
-        borderRadius: "medium",
+    if (resolvedTheme === "light") {
+      return lightTheme({
+        accentColor: "#00e4b4",
+        accentColorForeground: "#081018",
+        borderRadius: "large",
         fontStack: "system"
       });
     }
 
-    return lightTheme({
-      accentColor: "#6366F1",
-      accentColorForeground: "#ffffff",
-      borderRadius: "medium",
-      fontStack: "system"
+    return darkTheme({
+      accentColor: "#00e4b4",
+      accentColorForeground: "#081018",
+      borderRadius: "large",
+      fontStack: "system",
+      overlayBlur: "small"
     });
   }, [resolvedTheme]);
 
@@ -46,7 +47,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(() => new QueryClient());
 
   return (
-    <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+    <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
       <WagmiProvider config={wagmiConfig}>
         <QueryClientProvider client={queryClient}>
           <WalletLayer>{children}</WalletLayer>

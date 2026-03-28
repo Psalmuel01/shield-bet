@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
 import { AppProviders } from "@/components/providers";
-import { Header } from "@/components/header";
+import { AppShell } from "@/components/app-shell";
 import "@/styles/globals.css";
 
 export const metadata: Metadata = {
   title: "ShieldBet | Confidential Prediction Markets",
-  description: "Prediction markets with encrypted side selection and public ETH settlement for honest v1 operation."
+  description: "Prediction markets with encrypted side selection powered by Zama fhEVM and Lit-backed verification flows."
 };
 
 export default function RootLayout({
@@ -15,12 +15,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className="min-h-screen">
+      <body>
         <AppProviders>
-          <div className="page-shell min-h-screen">
-            <Header />
-            <main className="mx-auto w-full max-w-7xl px-4 py-6 md:px-6 md:py-8">{children}</main>
-          </div>
+          <AppShell>{children}</AppShell>
         </AppProviders>
       </body>
     </html>

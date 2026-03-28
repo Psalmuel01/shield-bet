@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Search } from "lucide-react";
+import { useMemo, useState } from "react";
 import { useAccount, useReadContract, useReadContracts } from "wagmi";
 import { MarketCard } from "@/components/market-card";
 import { shieldBetConfig } from "@/lib/contract";
 import { decodeMarketDetails, decodeMarketView } from "@/lib/market-contract";
 import { coerceMarketCategory, getEncryptedBandCount, inferCategory, MarketCategory } from "@/lib/market-ui";
-import { logInfo, logWarn } from "@/lib/telemetry";
 
 type MarketTab = "All" | "Crypto" | "Politics" | "Sports" | "Science" | "My Markets";
 type SortOption = "Closing Soon" | "Newest" | "Most Activity";
@@ -28,12 +28,12 @@ interface ParsedMarket {
 
 const tabs: MarketTab[] = ["All", "Crypto", "Politics", "Sports", "Science", "My Markets"];
 const sortOptions: SortOption[] = ["Closing Soon", "Newest", "Most Activity"];
-const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 export function MarketsDashboard() {
   const { address } = useAccount();
   const [activeTab, setActiveTab] = useState<MarketTab>("All");
   const [sortBy, setSortBy] = useState<SortOption>("Closing Soon");
+  const [search, setSearch] = useState("");
 
   const { data: marketCount, isLoading: loadingCount } = useReadContract({
     ...shieldBetConfig,
@@ -49,36 +49,16 @@ export function MarketsDashboard() {
   const contracts = useMemo(
     () =>
       ids.flatMap((marketId) => [
-        {
-          ...shieldBetConfig,
-          functionName: "markets" as const,
-          args: [marketId] as const
-        },
-        {
-          ...shieldBetConfig,
-          functionName: "marketMetadataCID" as const,
-          args: [marketId] as const
-        },
-        {
-          ...shieldBetConfig,
-          functionName: "getMarketDetails" as const,
-          args: [marketId] as const
-        },
-        {
-          ...shieldBetConfig,
-          functionName: "marketResolutionCID" as const,
-          args: [marketId] as const
-        },
-        {
-          ...shieldBetConfig,
-          functionName: "marketPoolBalance" as const,
-          args: [marketId] as const
-        }
+        { ...shieldBetConfig, functionName: "markets" as const, args: [marketId] as const },
+        { ...shieldBetConfig, functionName: "marketMetadataCID" as const, args: [marketId] as const },
+        { ...shieldBetConfig, functionName: "getMarketDetails" as const, args: [marketId] as const },
+        { ...shieldBetConfig, functionName: "marketResolutionCID" as const, args: [marketId] as const },
+        { ...shieldBetConfig, functionName: "marketPoolBalance" as const, args: [marketId] as const }
       ]),
     [ids]
   );
 
-  const { data: marketBatch, isLoading: loadingMarkets, error } = useReadContracts({
+  const { data: marketBatch, isLoading: loadingMarkets } = useReadContracts({
     contracts,
     query: { enabled: contracts.length > 0 }
   });
@@ -96,7 +76,6 @@ export function MarketsDashboard() {
       const marketId = ids[i / 5];
 
       if (marketRes?.status !== "success" || !marketRes.result) continue;
-
       const market = decodeMarketView(marketRes.result);
       if (!market) continue;
 
@@ -122,6 +101,11 @@ export function MarketsDashboard() {
     return rows;
   }, [ids, marketBatch]);
 
+  const totalEscrow = useMemo(
+    () => markets.reduce((acc, market) => acc + Number(market.poolBalanceWei), 0),
+    [markets]
+  );
+
   const filtered = useMemo(() => {
     let next = markets;
 
@@ -134,6 +118,11 @@ export function MarketsDashboard() {
       }
     }
 
+    if (search.trim()) {
+      const query = search.trim().toLowerCase();
+      next = next.filter((market) => market.question.toLowerCase().includes(query));
+    }
+
     if (sortBy === "Closing Soon") {
       next = [...next].sort((a, b) => Number(a.deadline - b.deadline));
     } else if (sortBy === "Newest") {
@@ -143,85 +132,83 @@ export function MarketsDashboard() {
     }
 
     return next;
-  }, [activeTab, address, markets, sortBy]);
+  }, [activeTab, address, markets, search, sortBy]);
 
   if (loadingCount || loadingMarkets) {
     return (
-      <div className="surface p-12 text-center">
-        <div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-indigo-500 border-t-transparent"></div>
-        <p className="mt-4 font-bold text-slate-500 animate-pulse">Syncing encrypted data...</p>
+      <div className="vm-card p-12 text-center">
+        <div className="mx-auto h-12 w-12 animate-spin rounded-full border-2 border-[var(--primary)] border-t-transparent" />
+        <p className="mt-4 text-base font-semibold text-white/72">Fetching markets from the confidential execution layer...</p>
       </div>
     );
   }
 
   return (
-    <section className="space-y-6">
-      <div className="surface p-6">
-        <div className="flex flex-wrap items-center justify-between gap-6">
-          <div className="flex flex-wrap items-center gap-2">
-            {tabs.map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`rounded-xl px-4 py-2 text-xs font-bold uppercase tracking-wider shadow-sm transition-all focus:ring-4 focus:ring-indigo-500/10 ${
-                  activeTab === tab
-                    ? "bg-indigo-600 text-white shadow-indigo-500/20"
-                    : "bg-white text-slate-500 hover:bg-slate-50 hover:text-slate-900 dark:bg-slate-950 dark:hover:bg-slate-900"
-                }`}
-              >
-                {tab}
-              </button>
-            ))}
+    <section className="vm-page">
+      <div className="vm-card overflow-hidden">
+        <div className="grid gap-6 lg:grid-cols-[1fr_auto] lg:items-end">
+          <div>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35" />
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search markets..."
+                className="vm-input pl-11"
+              />
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              {tabs.map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setActiveTab(tab)}
+                  className={`vm-soft-btn min-h-0 px-4 py-2 text-[11px] uppercase tracking-[0.18em] ${activeTab === tab ? "border-[var(--primary)]/24 bg-[var(--primary)]/12 text-[var(--primary)]" : ""}`}
+                >
+                  {tab}
+                </button>
+              ))}
+            </div>
           </div>
 
-          <div className="flex items-center gap-3">
-            <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Sort By</span>
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as SortOption)}
-              className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-900 outline-none transition focus:border-indigo-500 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-            >
-              {sortOptions.map((o) => <option key={o} value={o}>{o}</option>)}
-            </select>
+          <div className="flex flex-wrap items-center gap-4 rounded-[1.4rem] border border-white/6 bg-white/[0.03] p-4">
+            <div>
+              <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/35">Active</div>
+              <div className="mt-2 font-mono text-2xl font-bold text-white dark:text-white">{markets.length}</div>
+            </div>
+            <div className="h-10 w-px bg-white/8" />
+            <div>
+              <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/35">Volume</div>
+              <div className="mt-2 font-mono text-2xl font-bold text-[var(--success)]">{(totalEscrow / 1e18).toFixed(2)} ETH</div>
+            </div>
+            <div className="h-10 w-px bg-white/8" />
+            <div>
+              <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/35">Sort</div>
+              <select value={sortBy} onChange={(event) => setSortBy(event.target.value as SortOption)} className="vm-select mt-2 min-w-[11rem] py-2">
+                {sortOptions.map((option) => (
+                  <option key={option} value={option}>{option}</option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
       </div>
 
       {!filtered.length ? (
-        <div className="surface p-16 text-center">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-900">
-            <Lock className="h-8 w-8 text-slate-300 dark:text-slate-700" />
-          </div>
-          <h2 className="mt-6 text-2xl font-bold dark:text-white">No Markets Found</h2>
-          <p className="mx-auto mt-2 max-w-sm text-sm text-slate-500">
-            Your selection returned empty results. Try another filter or create a new prediction market.
+        <div className="vm-card p-16 text-center">
+          <div className="mx-auto inline-flex h-16 w-16 items-center justify-center rounded-full border border-white/6 bg-white/[0.03] text-2xl">🔒</div>
+          <h2 className="mt-6 font-['Sora'] text-2xl font-bold text-white">No markets found</h2>
+          <p className="mx-auto mt-3 max-w-md text-sm leading-7 text-white/55">
+            Your current filters returned nothing. Try another category, clear the search, or create a new market.
           </p>
         </div>
       ) : (
-        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="vm-grid cols-3">
           {filtered.map((market) => (
             <MarketCard key={market.marketId.toString()} {...market} />
           ))}
         </div>
       )}
     </section>
-  );
-}
-
-function Lock(props: any) {
-  return (
-    <svg 
-      {...props} 
-      xmlns="http://www.w3.org/2000/svg" 
-      width="24" height="24" 
-      viewBox="0 0 24 24" 
-      fill="none" 
-      stroke="currentColor" 
-      strokeWidth="2" 
-      strokeLinecap="round" 
-      strokeLinejoin="round"
-    >
-      <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-    </svg>
   );
 }

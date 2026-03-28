@@ -1,6 +1,6 @@
 "use client";
 
-import { Lock, Shield, Check } from "lucide-react";
+import { Check, Lock, Shield } from "lucide-react";
 
 interface BetPlacementProps {
   selectedOutcome: number;
@@ -32,80 +32,83 @@ export function BetPlacement({
   onSubmit
 }: BetPlacementProps) {
   return (
-    <div className="surface p-6 md:p-8 space-y-6">
+    <div className="vm-card space-y-6 p-6 md:p-7">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100">Select Position</h2>
-        <div className="flex items-center gap-1.5 rounded-full bg-indigo-50 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-400">
-          <Lock className="h-3 w-3" /> Encrypted
-        </div>
+        <h2 className="font-['Sora'] text-xl font-bold text-white">Place Confidential Bet</h2>
+        <span className="vm-category-pill border-[var(--primary)]/20 bg-[var(--primary)]/10 text-[var(--primary)]">
+          <Lock className="h-3.5 w-3.5" />
+          Encrypted
+        </span>
       </div>
 
-      <div className="grid gap-3">
-        {outcomeLabels.map((label, idx) => {
-          const isSelected = selectedOutcome === idx;
+      <div className="grid gap-3 md:grid-cols-2">
+        {outcomeLabels.map((label, index) => {
+          const selected = selectedOutcome === index;
           return (
             <button
-              key={idx}
+              key={`${label}-${index}`}
               type="button"
               disabled={alreadyBet || isSubmitting}
-              onClick={() => onSelectOutcome(idx)}
-              className={`group relative flex items-center justify-between rounded-2xl border-2 p-4 text-left transition-all hover:scale-[1.01] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50 ${isSelected
-                  ? "border-indigo-500 bg-indigo-50/50 dark:bg-indigo-500/5 ring-4 ring-indigo-500/10"
-                  : "border-slate-100 bg-white hover:border-slate-200 dark:border-slate-800 dark:bg-slate-950"
-                }`}
+              onClick={() => onSelectOutcome(index)}
+              className={`rounded-[1.35rem] border p-4 text-left transition ${
+                selected
+                  ? "border-[var(--primary)]/30 bg-[var(--primary)]/10"
+                  : "border-white/6 bg-white/[0.03] hover:border-white/12 hover:bg-white/[0.05]"
+              } disabled:cursor-not-allowed disabled:opacity-55`}
             >
-              <div className="flex items-center gap-4">
-                <div className={`flex h-6 w-6 items-center justify-center rounded-full border-2 transition-colors ${isSelected ? "border-indigo-500 bg-indigo-500 text-white" : "border-slate-200 dark:border-slate-700"
-                  }`}>
-                  {isSelected ? <Check className="h-3.5 w-3.5 stroke-[3px]" /> : <span className="text-[10px] font-bold">{idx + 1}</span>}
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/35">Outcome</div>
+                  <div className="mt-2 font-['Sora'] text-lg font-bold text-white">{label}</div>
                 </div>
-                <span className={`font-bold transition-colors ${isSelected ? "text-indigo-900 dark:text-white" : "text-slate-600 dark:text-slate-400"}`}>
-                  {label}
+                <span
+                  className={`inline-flex h-7 w-7 items-center justify-center rounded-full border ${
+                    selected ? "border-[var(--primary)] bg-[var(--primary)] text-[#081018]" : "border-white/12 text-white/45"
+                  }`}
+                >
+                  {selected ? <Check className="h-4 w-4" /> : index + 1}
                 </span>
               </div>
-              {isSelected && <div className="h-1.5 w-1.5 animate-pulse rounded-full bg-indigo-500" />}
             </button>
           );
         })}
       </div>
 
-      <div className="space-y-3 pt-4 border-t border-slate-100 dark:border-slate-800">
-        <div className="flex items-center justify-between">
-          <label htmlFor="amount" className="text-sm font-bold uppercase tracking-widest text-slate-400">
+      <div>
+        <div className="mb-3 flex items-center justify-between">
+          <label htmlFor="bet-amount" className="vm-field-label mb-0">
             Stake Amount (ETH)
           </label>
-          <span className="text-xs font-medium text-slate-500">Available: {balanceLabel}</span>
+          <span className="text-xs text-white/45">Available: {balanceLabel}</span>
         </div>
-        <div className="relative group">
+        <div className="relative">
           <input
-            id="amount"
+            id="bet-amount"
             value={amount}
             disabled={alreadyBet || isSubmitting}
             onChange={(event) => onAmountChange(event.target.value)}
-            className="w-full rounded-2xl border-2 border-slate-100 bg-slate-50/50 px-5 py-4 text-xl font-bold text-slate-900 outline-none transition-all focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-800 dark:bg-slate-900 dark:text-white dark:focus:bg-slate-950"
+            className="vm-input pr-20 text-lg font-semibold"
             placeholder="0.00"
           />
           <button
             type="button"
             disabled={alreadyBet || isSubmitting}
             onClick={onMax}
-            className="absolute right-4 top-1/2 -translate-y-1/2 rounded-xl bg-slate-900 px-3 py-1.5 text-[10px] font-bold text-white transition hover:bg-slate-800 active:scale-95 disabled:opacity-50 dark:bg-indigo-600 dark:hover:bg-indigo-500"
+            className="absolute right-3 top-1/2 -translate-y-1/2 rounded-xl border border-white/8 bg-white/[0.05] px-3 py-2 text-[11px] font-bold uppercase tracking-[0.14em] text-white/72 transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
           >
-            MAX
+            Max
           </button>
         </div>
       </div>
 
-      <div className="rounded-2xl bg-indigo-900 p-5 text-white shadow-xl shadow-indigo-900/20 dark:shadow-indigo-500/10">
+      <div className="rounded-[1.5rem] border border-[var(--primary)]/16 bg-[var(--primary)]/8 p-5">
         <div className="flex items-start gap-4">
-          <div className="mt-1 rounded-full bg-indigo-800 p-2">
-            <Shield className="h-5 w-5 text-indigo-300" />
+          <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-white/8 text-[var(--primary)]">
+            <Shield className="h-5 w-5" />
           </div>
-          <div className="flex-1">
-            <p className="text-xs font-bold uppercase tracking-widest text-indigo-300">Confidential Processing</p>
-            <p className="mt-1 text-sm leading-relaxed text-indigo-100 font-medium">
-              {statusHint}
-            </p>
+          <div>
+            <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--primary)]">Confidential processing</div>
+            <p className="mt-2 text-sm leading-7 text-white/72">{statusHint}</p>
           </div>
         </div>
       </div>
@@ -114,9 +117,9 @@ export function BetPlacement({
         type="button"
         disabled={alreadyBet || isSubmitting}
         onClick={onSubmit}
-        className="group relative flex w-full items-center justify-center gap-3 overflow-hidden rounded-2xl bg-slate-900 py-5 text-lg font-bold text-white transition-all hover:bg-slate-800 hover:shadow-2xl active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 dark:bg-indigo-600 dark:hover:bg-indigo-500 dark:shadow-indigo-500/20"
+        className="vm-primary-btn w-full disabled:cursor-not-allowed disabled:opacity-50"
       >
-        <Lock className={`h-5 w-5 transition-transform group-hover:rotate-12 ${isSubmitting ? "animate-pulse" : ""}`} />
+        <Lock className={`h-4 w-4 ${isSubmitting ? "enc-pulse" : ""}`} />
         {submitLabel}
       </button>
     </div>

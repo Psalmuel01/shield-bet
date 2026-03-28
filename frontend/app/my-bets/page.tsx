@@ -1,25 +1,20 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { getAddress, formatEther } from "viem";
+import { Trophy, Wallet } from "lucide-react";
+import { getAddress } from "viem";
 import { useAccount, useReadContract, useReadContracts, useWalletClient } from "wagmi";
 import { MyBetRow, MyBetsTable } from "@/components/my-bets-table";
 import { shieldBetConfig } from "@/lib/contract";
 import { decryptUserHandles } from "@/lib/encryption";
 import { decodeMarketView } from "@/lib/market-contract";
-import { getLocalBetsByWallet, LocalBetRecord } from "@/lib/local-bets";
-import { logInfo, logWarn } from "@/lib/telemetry";
+import { logWarn } from "@/lib/telemetry";
 
 export default function MyBetsPage() {
   const { address } = useAccount();
   const normalizedAddress = address ? getAddress(address) : null;
   const { data: walletClient } = useWalletClient();
-  const [localBets, setLocalBets] = useState<LocalBetRecord[]>([]);
   const [decryptedPositions, setDecryptedPositions] = useState<Record<string, number>>({});
-
-  useEffect(() => {
-    setLocalBets(getLocalBetsByWallet(address));
-  }, [address]);
 
   const { data: marketCount } = useReadContract({
     ...shieldBetConfig,
@@ -36,60 +31,31 @@ export default function MyBetsPage() {
     if (!address) return [];
 
     return ids.flatMap((marketId) => [
-      {
-        ...shieldBetConfig,
-        functionName: "markets" as const,
-        args: [marketId] as const
-      },
-      {
-        ...shieldBetConfig,
-        functionName: "hasPosition" as const,
-        args: [marketId, address] as const
-      },
-      {
-        ...shieldBetConfig,
-        functionName: "getClaimQuote" as const,
-        args: [marketId, address] as const
-      },
-      {
-        ...shieldBetConfig,
-        functionName: "getMyOutcome" as const,
-        args: [marketId] as const
-      },
-      {
-        ...shieldBetConfig,
-        functionName: "stakeAmounts" as const,
-        args: [marketId, address] as const
-      },
-      {
-        ...shieldBetConfig,
-        functionName: "hasClaimed" as const,
-        args: [marketId, address] as const
-      },
-      {
-        ...shieldBetConfig,
-        functionName: "getOutcomeLabels" as const,
-        args: [marketId] as const
-      }
+      { ...shieldBetConfig, functionName: "markets" as const, args: [marketId] as const },
+      { ...shieldBetConfig, functionName: "hasPosition" as const, args: [marketId, address] as const },
+      { ...shieldBetConfig, functionName: "getClaimQuote" as const, args: [marketId, address] as const },
+      { ...shieldBetConfig, functionName: "getMyOutcome" as const, args: [marketId] as const },
+      { ...shieldBetConfig, functionName: "stakeAmounts" as const, args: [marketId, address] as const },
+      { ...shieldBetConfig, functionName: "hasClaimed" as const, args: [marketId, address] as const },
+      { ...shieldBetConfig, functionName: "getOutcomeLabels" as const, args: [marketId] as const }
     ]);
   }, [address, ids]);
 
   const { data: batch } = useReadContracts({
     contracts,
-    query: {
-      enabled: Boolean(address && contracts.length)
-    }
+    query: { enabled: Boolean(address && contracts.length) }
   });
 
   useEffect(() => {
     if (!normalizedAddress || !walletClient || !batch?.length) return;
+
     const userAddress = normalizedAddress;
     const signer = walletClient;
     const batchResults = batch;
-
     let cancelled = false;
+
     async function loadPositions() {
-      const contractsToDecrypt: { marketId: bigint; handle: `0x${string}` }[] = [];
+      const handles: { marketId: bigint; handle: `0x${string}` }[] = [];
 
       for (let i = 0; i < batchResults.length; i += 7) {
         const hasPositionRes = batchResults[i + 1];
@@ -99,25 +65,23 @@ export default function MyBetsPage() {
         if (hasPositionRes?.status !== "success" || !hasPositionRes.result) continue;
         if (outcomeRes?.status !== "success" || !outcomeRes.result) continue;
 
-        contractsToDecrypt.push({
-          marketId,
-          handle: outcomeRes.result as `0x${string}`
-        });
+        handles.push({ marketId, handle: outcomeRes.result as `0x${string}` });
       }
 
-      if (!contractsToDecrypt.length) return;
+      if (!handles.length) return;
 
       try {
         const decrypted = await decryptUserHandles({
           contractAddress: shieldBetConfig.address,
           userAddress,
           walletClient: signer,
-          handles: contractsToDecrypt.map((entry) => entry.handle)
+          handles: handles.map((entry) => entry.handle)
         });
+
         if (cancelled) return;
 
         const next: Record<string, number> = {};
-        for (const entry of contractsToDecrypt) {
+        for (const entry of handles) {
           next[entry.marketId.toString()] = Number(decrypted[entry.handle]);
         }
         setDecryptedPositions(next);
@@ -127,7 +91,9 @@ export default function MyBetsPage() {
     }
 
     void loadPositions();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [batch, ids, normalizedAddress, walletClient]);
 
   const rows = useMemo(() => {
@@ -144,8 +110,10 @@ export default function MyBetsPage() {
       const marketId = ids[i / 7];
 
       if (
-        marketRes?.status !== "success" || !marketRes.result ||
-        hasPositionRes?.status !== "success" || !hasPositionRes.result
+        marketRes?.status !== "success" ||
+        !marketRes.result ||
+        hasPositionRes?.status !== "success" ||
+        !hasPositionRes.result
       ) {
         continue;
       }
@@ -153,22 +121,19 @@ export default function MyBetsPage() {
       const market = decodeMarketView(marketRes.result);
       if (!market) continue;
 
-      const labels = (labelsRes?.status === "success" ? labelsRes.result as string[] : []) || ["YES", "NO"];
+      const labels = (labelsRes?.status === "success" ? (labelsRes.result as string[]) : []) || ["YES", "NO"];
       const decryptedIdx = decryptedPositions[marketId.toString()];
       const position = decryptedIdx !== undefined ? labels[decryptedIdx] : "Encrypted";
 
-      const stakeWei = BigInt((stakeRes?.status === "success" ? stakeRes.result as bigint : 0n) || 0n);
+      const stakeWei = BigInt(((stakeRes?.status === "success" ? stakeRes.result : 0n) as bigint) || 0n);
       const isClaimable = claimRes?.status === "success" ? (claimRes.result as unknown as [bigint, boolean])[1] : false;
       const hasClaimed = hasClaimedRes?.status === "success" ? Boolean(hasClaimedRes.result) : false;
 
-      // Status mapping
-      const statusInt = market.status;
       let status: MyBetRow["status"] = "Open";
-      if (statusInt === 0) status = "Open";
-      else if (statusInt === 1) status = "Awaiting Resolution";
-      else if (statusInt === 2) status = "Proposed";
-      else if (statusInt === 3) status = "Disputed";
-      else if (statusInt === 4) {
+      if (market.status === 1) status = "Awaiting Resolution";
+      else if (market.status === 2) status = "Proposed";
+      else if (market.status === 3) status = "Disputed";
+      else if (market.status === 4) {
         if (hasClaimed) status = "Claimed";
         else if (isClaimable) status = "Won";
         else status = "Finalized";
@@ -188,26 +153,60 @@ export default function MyBetsPage() {
     return next;
   }, [address, batch, decryptedPositions, ids]);
 
+  const stats = useMemo(() => {
+    const total = rows.length;
+    const open = rows.filter((row) => row.status === "Open" || row.status === "Awaiting Resolution").length;
+    const won = rows.filter((row) => row.status === "Won" || row.status === "Claimed").length;
+    return [
+      { label: "Total positions", value: total.toString() },
+      { label: "Still active", value: open.toString() },
+      { label: "Winning records", value: won.toString() }
+    ];
+  }, [rows]);
+
   return (
-    <section className="space-y-8">
-      <div className="surface p-8 md:p-12 relative overflow-hidden">
-        <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/5 blur-3xl -mr-32 -mt-32" />
-        <div className="relative z-10 space-y-3">
-          <div className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:bg-slate-900">
-            Portfolio
+    <section className="vm-page page-enter">
+      <div className="vm-page-header">
+        <div>
+          <div className="vm-page-header__meta">
+            <span className="vm-page-eyebrow">
+              <Trophy className="h-3.5 w-3.5" />
+              Portfolio Dashboard
+            </span>
           </div>
-          <h1 className="text-3xl font-black tracking-tight text-slate-900 dark:text-white md:text-5xl">
-            My Positions
+          <h1 className="vm-page-title mt-5">
+            My <span className="vm-text-gradient">Positions</span>
           </h1>
-          <p className="max-w-xl text-sm font-medium leading-relaxed text-slate-500 dark:text-slate-400">
-            Monitor and manage your private prediction market positions. Encrypted data is decrypted locally using your wallet signature.
+          <p className="vm-page-subtitle mt-4">
+            Track your confidential market exposure, recovered outcome selections, claimable positions, and completed settlements in one place.
           </p>
+        </div>
+
+        <div className="vm-card w-full max-w-sm p-6">
+          <div className="flex items-center gap-3 text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--primary)]">
+            <Wallet className="h-4 w-4" />
+            Portfolio Summary
+          </div>
+          <div className="mt-5 grid gap-3">
+            {stats.map((item) => (
+              <div key={item.label} className="flex items-center justify-between rounded-2xl border border-white/6 bg-white/[0.03] px-4 py-3">
+                <span className="text-sm text-[var(--text-muted)]">{item.label}</span>
+                <span className="font-mono text-lg font-bold text-white">{item.value}</span>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
       {!address ? (
-        <div className="surface p-20 text-center">
-          <p className="text-slate-400 font-bold uppercase tracking-widest">Connect wallet to view portfolio</p>
+        <div className="vm-card p-16 text-center">
+          <div className="mx-auto inline-flex h-16 w-16 items-center justify-center rounded-full border border-white/6 bg-white/[0.03] text-2xl">
+            🔐
+          </div>
+          <h2 className="mt-6 font-['Sora'] text-2xl font-bold text-white">Connect your wallet</h2>
+          <p className="mx-auto mt-3 max-w-md text-sm leading-7 text-white/55">
+            Your portfolio is tied to the wallet that placed each market position. Connect it to recover your confidential side selections locally.
+          </p>
         </div>
       ) : (
         <MyBetsTable rows={rows} />

@@ -57,7 +57,7 @@ async function main() {
   console.log(`Market created: ${marketId.toString()}`);
 
   async function encryptBetSide(bettorAddress: string, outcome: number) {
-    const input = hre.fhevm.createEncryptedInput(contractAddress, bettorAddress);
+    const input = hre.fhevm.createEncryptedInput(contractAddress!, bettorAddress);
     input.add8(outcome);
     return input.encrypt();
   }

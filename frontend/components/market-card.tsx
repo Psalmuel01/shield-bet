@@ -1,6 +1,6 @@
 "use client";
 
-import { Lock, ShieldAlert, Timer } from "lucide-react";
+import { CheckCircle2, ChevronRight, Clock, Users } from "lucide-react";
 import { useMemo } from "react";
 import { formatEther } from "viem";
 import { InteractiveLink } from "@/components/interactive-link";
@@ -21,100 +21,103 @@ interface MarketCardProps {
 }
 
 const categoryStyles: Record<string, string> = {
-  Crypto: "bg-indigo-100 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300",
-  Politics: "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300",
-  Sports: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300",
-  Science: "bg-cyan-100 text-cyan-700 dark:bg-cyan-500/20 dark:text-cyan-300",
-  Other: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
+  Crypto: "text-orange-300 bg-orange-400/10 border-orange-400/20",
+  Politics: "text-purple-300 bg-purple-400/10 border-purple-400/20",
+  Sports: "text-emerald-300 bg-emerald-400/10 border-emerald-400/20",
+  Science: "text-cyan-300 bg-cyan-400/10 border-cyan-400/20",
+  Other: "text-slate-300 bg-slate-400/10 border-slate-400/20"
 };
 
 const statusStyles: Record<string, string> = {
-  Active: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300",
-  Expired: "bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-300",
-  Proposed: "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300",
-  Disputed: "bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-300",
-  Finalized: "bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300"
+  Active: "text-emerald-300 bg-emerald-400/10 border-emerald-400/20",
+  Expired: "text-amber-300 bg-amber-400/10 border-amber-400/20",
+  Proposed: "text-blue-300 bg-blue-400/10 border-blue-400/20",
+  Disputed: "text-rose-300 bg-rose-400/10 border-rose-400/20",
+  Finalized: "text-slate-200 bg-white/6 border-white/10"
 };
 
-export function MarketCard({ 
-  marketId, 
-  question, 
-  deadline, 
-  outcome, 
-  status: rawStatus, 
-  marketType: rawType, 
-  category, 
-  metadataCid, 
-  resolutionCid, 
-  poolBalanceWei 
+export function MarketCard({
+  marketId,
+  question,
+  deadline,
+  outcome,
+  status: rawStatus,
+  marketType: rawType,
+  category,
+  metadataCid,
+  resolutionCid,
+  poolBalanceWei
 }: MarketCardProps) {
   const status = getMarketStatus(rawStatus, deadline);
-  const mType = getMarketType(rawType);
-  
-  const encryptedBandCount = useMemo(() => getEncryptedBandCount(marketId), [marketId]);
-  const encryptedBandText = renderEncryptedDots(encryptedBandCount);
+  const marketType = getMarketType(rawType);
+  const bandCount = useMemo(() => getEncryptedBandCount(marketId), [marketId]);
+  const bandText = renderEncryptedDots(bandCount);
+  const closingLabel = status === "Active" ? getCountdown(deadline) : formatDeadline(deadline);
 
   return (
-    <article className="surface group relative flex flex-col p-5 hover:shadow-xl transition-all hover:-translate-y-1">
-      <div className="mb-4 flex items-center justify-between">
-        <div className="flex gap-2">
-          <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${categoryStyles[category]}`}>{category}</span>
-          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:bg-slate-800 dark:text-slate-400">{mType}</span>
+    <div className="vm-card vm-card--interactive flex h-full min-h-[22rem] flex-col">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={`vm-category-pill ${categoryStyles[category] || categoryStyles.Other}`}>{category}</span>
+          <span className="vm-category-pill border-white/8 bg-white/4 text-white/55">{marketType}</span>
         </div>
-        <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${statusStyles[status]}`}>{status}</span>
+        <span className={`vm-status-pill ${statusStyles[status] || statusStyles.Active}`}>
+          {status === "Finalized" ? <CheckCircle2 className="h-3.5 w-3.5" /> : <span className="h-2 w-2 rounded-full bg-current" />}
+          {status}
+        </span>
       </div>
 
-      <InteractiveLink
-        href={`/markets/${marketId}`}
-        className="flex-1"
-      >
-        <h2 className="line-clamp-2 text-xl font-bold tracking-tight text-slate-900 group-hover:text-indigo-600 dark:text-slate-100 dark:group-hover:text-indigo-400 transition-colors">
-          {question}
-        </h2>
-      </InteractiveLink>
-
-      <div className="mt-4 space-y-3">
-        <div className="flex items-center justify-between text-xs font-medium text-slate-500 dark:text-slate-400">
-          <span className="flex items-center gap-1.5"><Timer className="h-4 w-4" /> {status === "Active" ? "Ends in " + getCountdown(deadline) : "Closed " + formatDeadline(deadline)}</span>
-          <span className="font-bold text-slate-900 dark:text-slate-100">{Number(formatEther(poolBalanceWei)).toFixed(4)} ETH</span>
-        </div>
-
-        <div className="rounded-2xl bg-indigo-50/50 p-4 dark:bg-indigo-500/5 border border-indigo-100 dark:border-indigo-500/10">
-          <div className="flex items-center justify-between">
-            <p className="text-xs font-bold uppercase tracking-wider text-indigo-700 dark:text-indigo-300">Confidentiality Band</p>
-            <Lock className="h-3.5 w-3.5 text-indigo-500" />
-          </div>
-          <div className="mt-2 flex items-center gap-1.5">
-            <span className="text-xl leading-none text-indigo-500/30 dark:text-indigo-400/20 line-through decoration-indigo-500/50 decoration-2">
-              {encryptedBandText}
-            </span>
-            <span className="text-xs font-medium text-indigo-900 dark:text-indigo-200">
-              {encryptedBandCount} Encrypted Position{encryptedBandCount !== 1 ? "s" : ""}
-            </span>
-          </div>
+      <div className="mt-6 flex-1">
+        <InteractiveLink href={`/markets/${marketId}`} pendingClassName="opacity-75" className="block">
+          <h2 className="vm-card__title transition-colors hover:text-[var(--primary)]">{question}</h2>
+        </InteractiveLink>
+        <p className="vm-card__description">
+          Confidential activity remains abstracted while the market is live. Open the detail view to place an encrypted side selection or inspect resolution state.
+        </p>
+        <div className="mt-6 text-[11px] font-bold uppercase tracking-[0.18em] text-white/35">Pool</div>
+        <div className="mt-2 font-mono text-2xl font-bold text-white dark:text-white">
+          {Number(formatEther(poolBalanceWei)).toFixed(4)} ETH
         </div>
       </div>
 
-      {status === "Finalized" ? (
-        <div className="mt-4 rounded-xl bg-slate-900 p-3 text-center dark:bg-slate-800">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Official Outcome</p>
-          <p className="mt-1 text-sm font-bold text-white">Index {outcome}</p>
+      <div className="vm-encrypted-band mt-6">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--primary)]">Encrypted activity</div>
+            <div className="mt-3 flex items-center gap-3">
+              <span className="vm-encrypted-dots">{bandText}</span>
+              <span className="text-sm font-semibold text-white/82">{bandCount} confidential positions</span>
+            </div>
+          </div>
+          <Users className="h-5 w-5 text-[var(--primary)]" />
         </div>
-      ) : (
+      </div>
+
+      <div className="vm-card__footer mt-6">
+        <div className="space-y-1">
+          <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/35">Timing</div>
+          <div className="flex items-center gap-2 text-sm font-semibold text-white/82">
+            <Clock className="h-4 w-4 text-[var(--accent)]" />
+            {status === "Active" ? `Ends in ${closingLabel}` : closingLabel}
+          </div>
+        </div>
+
         <InteractiveLink
           href={`/markets/${marketId}`}
-          className="mt-4 w-full rounded-xl bg-slate-900 py-3 text-center text-sm font-bold text-white transition hover:bg-slate-800 active:scale-[0.98] dark:bg-indigo-600 dark:hover:bg-indigo-500"
+          pendingClassName="opacity-80"
+          className="inline-flex h-12 w-12 items-center justify-center rounded-2xl border border-[var(--primary)]/20 bg-[var(--primary)]/10 text-[var(--primary)] transition hover:bg-[var(--primary)] hover:text-[#081018]"
         >
-          {status === "Active" ? "PLACE POSITION" : "VIEW DETAILS"}
+          <ChevronRight className="h-5 w-5" />
         </InteractiveLink>
-      )}
+      </div>
 
-      {metadataCid && (
-        <div className="mt-4 flex gap-3 opacity-0 group-hover:opacity-100 transition-opacity">
-          <a href={cidToExplorer(metadataCid)} target="_blank" rel="noreferrer" className="text-[10px] font-bold text-slate-400 hover:text-indigo-500 transition-colors uppercase">Metadata CID</a>
-          {resolutionCid && <a href={cidToExplorer(resolutionCid)} target="_blank" rel="noreferrer" className="text-[10px] font-bold text-slate-400 hover:text-indigo-500 transition-colors uppercase">Resolution CID</a>}
+      {(metadataCid || resolutionCid) && (
+        <div className="mt-4 flex flex-wrap gap-3 text-[10px] font-bold uppercase tracking-[0.16em] text-white/35">
+          {metadataCid ? <a href={cidToExplorer(metadataCid)} target="_blank" rel="noreferrer" className="transition hover:text-[var(--primary)]">Metadata CID</a> : null}
+          {resolutionCid ? <a href={cidToExplorer(resolutionCid)} target="_blank" rel="noreferrer" className="transition hover:text-[var(--primary)]">Resolution CID</a> : null}
+          {status === "Finalized" ? <span className="text-white/55">Resolved outcome: {outcome}</span> : null}
         </div>
       )}
-    </article>
+    </div>
   );
 }
