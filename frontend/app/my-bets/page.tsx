@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { getAddress } from "viem";
+import { getAddress, formatEther } from "viem";
 import { useAccount, useReadContract, useReadContracts, useWalletClient } from "wagmi";
 import { MyBetRow, MyBetsTable } from "@/components/my-bets-table";
 import { shieldBetConfig } from "@/lib/contract";
@@ -15,7 +15,7 @@ export default function MyBetsPage() {
   const normalizedAddress = address ? getAddress(address) : null;
   const { data: walletClient } = useWalletClient();
   const [localBets, setLocalBets] = useState<LocalBetRecord[]>([]);
-  const [decryptedPositions, setDecryptedPositions] = useState<Record<string, "YES" | "NO">>({});
+  const [decryptedPositions, setDecryptedPositions] = useState<Record<string, number>>({});
 
   useEffect(() => {
     setLocalBets(getLocalBetsByWallet(address));
@@ -26,20 +26,9 @@ export default function MyBetsPage() {
     functionName: "marketCount"
   });
 
-  useEffect(() => {
-    logInfo("my-bets", "read marketCount", {
-      contract: shieldBetConfig.address,
-      marketCount: marketCount?.toString() || "0",
-      account: address || ""
-    });
-  }, [marketCount, address]);
-
   const ids = useMemo(() => {
-    if (marketCount === undefined || marketCount === null) return [] as bigint[];
-
+    if (!marketCount) return [] as bigint[];
     const count = Number(marketCount);
-    if (!Number.isFinite(count) || count <= 0) return [] as bigint[];
-
     return Array.from({ length: count }, (_, idx) => BigInt(idx + 1));
   }, [marketCount]);
 
@@ -76,6 +65,11 @@ export default function MyBetsPage() {
         ...shieldBetConfig,
         functionName: "hasClaimed" as const,
         args: [marketId, address] as const
+      },
+      {
+        ...shieldBetConfig,
+        functionName: "getOutcomeLabels" as const,
+        args: [marketId] as const
       }
     ]);
   }, [address, ids]);
@@ -88,17 +82,6 @@ export default function MyBetsPage() {
   });
 
   useEffect(() => {
-    if (!batch?.length) return;
-    logInfo("my-bets", "read markets batch", {
-      calls: batch.length,
-      statuses: batch.map((entry, idx) => ({
-        idx,
-        status: entry.status
-      }))
-    });
-  }, [batch]);
-
-  useEffect(() => {
     if (!normalizedAddress || !walletClient || !batch?.length) return;
     const userAddress = normalizedAddress;
     const signer = walletClient;
@@ -108,10 +91,10 @@ export default function MyBetsPage() {
     async function loadPositions() {
       const contractsToDecrypt: { marketId: bigint; handle: `0x${string}` }[] = [];
 
-      for (let i = 0; i < batchResults.length; i += 6) {
+      for (let i = 0; i < batchResults.length; i += 7) {
         const hasPositionRes = batchResults[i + 1];
         const outcomeRes = batchResults[i + 3];
-        const marketId = ids[i / 6];
+        const marketId = ids[i / 7];
 
         if (hasPositionRes?.status !== "success" || !hasPositionRes.result) continue;
         if (outcomeRes?.status !== "success" || !outcomeRes.result) continue;
@@ -133,97 +116,62 @@ export default function MyBetsPage() {
         });
         if (cancelled) return;
 
-        const next: Record<string, "YES" | "NO"> = {};
+        const next: Record<string, number> = {};
         for (const entry of contractsToDecrypt) {
-          const clear = Number(decrypted[entry.handle]);
-          if (clear === 1) next[entry.marketId.toString()] = "YES";
-          if (clear === 2) next[entry.marketId.toString()] = "NO";
+          next[entry.marketId.toString()] = Number(decrypted[entry.handle]);
         }
         setDecryptedPositions(next);
       } catch (error) {
-        if (!cancelled) {
-          logWarn("my-bets", "failed to decrypt positions", {
-            account: userAddress,
-            error: error instanceof Error ? error.message : String(error)
-          });
-        }
+        logWarn("my-bets", "failed to decrypt positions", error);
       }
     }
 
     void loadPositions();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [batch, ids, normalizedAddress, walletClient]);
 
   const rows = useMemo(() => {
     if (!batch?.length || !address) return [] as MyBetRow[];
 
-    const localByMarket = new Map(localBets.map((bet) => [bet.marketId, bet]));
-
     const next: MyBetRow[] = [];
-    for (let i = 0; i < batch.length; i += 6) {
+    for (let i = 0; i < batch.length; i += 7) {
       const marketRes = batch[i];
       const hasPositionRes = batch[i + 1];
       const claimRes = batch[i + 2];
       const stakeRes = batch[i + 4];
       const hasClaimedRes = batch[i + 5];
-      const marketId = ids[i / 6];
+      const labelsRes = batch[i + 6];
+      const marketId = ids[i / 7];
 
       if (
-        marketRes?.status !== "success" ||
-        !marketRes.result ||
-        hasPositionRes?.status !== "success" ||
-        !hasPositionRes.result ||
-        claimRes?.status !== "success" ||
-        !claimRes.result ||
-        stakeRes?.status !== "success" ||
-        hasClaimedRes?.status !== "success"
+        marketRes?.status !== "success" || !marketRes.result ||
+        hasPositionRes?.status !== "success" || !hasPositionRes.result
       ) {
         continue;
       }
 
       const market = decodeMarketView(marketRes.result);
-      if (!market) {
-        continue;
-      }
+      if (!market) continue;
 
-      const claimResult = claimRes.result as readonly [bigint, boolean];
-      const local = localByMarket.get(marketId.toString());
-      const decryptedPosition = decryptedPositions[marketId.toString()];
-      const stakeWei = BigInt((stakeRes.result as bigint | number | string) || 0);
-      const position: MyBetRow["position"] = decryptedPosition || local?.position || "Encrypted";
-      const canClaim = Boolean(claimResult[1]);
-      const hasClaimed = Boolean(hasClaimedRes.result);
-      const marketClosed = Date.now() >= Number(market.deadline) * 1000;
-      const isCancelled = market.resolved && market.outcome === 3;
-      const isResolvedYesNo = market.resolved && (market.outcome === 1 || market.outcome === 2);
-      const positionKnown = position === "YES" || position === "NO";
-      const userWon =
-        (position === "YES" && market.outcome === 1) ||
-        (position === "NO" && market.outcome === 2);
+      const labels = (labelsRes?.status === "success" ? labelsRes.result as string[] : []) || ["YES", "NO"];
+      const decryptedIdx = decryptedPositions[marketId.toString()];
+      const position = decryptedIdx !== undefined ? labels[decryptedIdx] : "Encrypted";
 
+      const stakeWei = BigInt((stakeRes?.status === "success" ? stakeRes.result as bigint : 0n) || 0n);
+      const isClaimable = claimRes?.status === "success" ? (claimRes.result as unknown as [bigint, boolean])[1] : false;
+      const hasClaimed = hasClaimedRes?.status === "success" ? Boolean(hasClaimedRes.result) : false;
+
+      // Status mapping
+      const statusInt = market.status;
       let status: MyBetRow["status"] = "Open";
-      let claimType: MyBetRow["claimType"] | undefined;
-
-      if (!market.resolved) {
-        status = marketClosed ? "Awaiting Resolution" : "Open";
-      } else if (isCancelled) {
-        claimType = "refund";
-        status = hasClaimed ? "Refunded" : canClaim ? "Refund Available" : "Cancelled";
-      } else if (isResolvedYesNo) {
-        claimType = "winnings";
-        if (hasClaimed) {
-          status = "Claimed";
-        } else if (canClaim) {
-          status = "Won";
-        } else if (!positionKnown) {
-          status = "Resolved";
-        } else if (userWon) {
-          status = "Awaiting Payout";
-        } else {
-          status = "Lost";
-        }
+      if (statusInt === 0) status = "Open";
+      else if (statusInt === 1) status = "Awaiting Resolution";
+      else if (statusInt === 2) status = "Proposed";
+      else if (statusInt === 3) status = "Disputed";
+      else if (statusInt === 4) {
+        if (hasClaimed) status = "Claimed";
+        else if (isClaimable) status = "Won";
+        else status = "Finalized";
       }
 
       next.push({
@@ -232,44 +180,34 @@ export default function MyBetsPage() {
         position,
         amountWei: stakeWei.toString(),
         status,
-        canClaim,
-        claimType
+        canClaim: isClaimable && !hasClaimed,
+        claimType: "winnings"
       });
     }
 
     return next;
-  }, [address, batch, decryptedPositions, ids, localBets]);
-
-  useEffect(() => {
-    logInfo("my-bets", "parsed rows", {
-      count: rows.length,
-      rows: rows.map((row) => ({
-        marketId: row.marketId.toString(),
-        question: row.question,
-        position: row.position,
-        amountWei: row.amountWei,
-        status: row.status,
-        canClaim: row.canClaim,
-        claimType: row.claimType || ""
-      }))
-    });
-  }, [rows]);
+  }, [address, batch, decryptedPositions, ids]);
 
   return (
-    <section className="space-y-5">
-      <div className="surface p-6 md:p-8">
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100 md:text-4xl">My Bets</h1>
-        <p className="mt-3 max-w-2xl text-sm text-slate-600 dark:text-slate-300 md:text-base">
-          Portfolio view of your ShieldBet v1 positions. Your ETH stake is public on-chain; your side is decrypted locally when your wallet can sign.
-        </p>
-        <p className="mt-2 max-w-2xl text-xs text-slate-500 dark:text-slate-400">
-          If wallet signing is unavailable, side recovery falls back to this browser&apos;s local record.
-        </p>
+    <section className="space-y-8">
+      <div className="surface p-8 md:p-12 relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/5 blur-3xl -mr-32 -mt-32" />
+        <div className="relative z-10 space-y-3">
+          <div className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:bg-slate-900">
+            Portfolio
+          </div>
+          <h1 className="text-3xl font-black tracking-tight text-slate-900 dark:text-white md:text-5xl">
+            My Positions
+          </h1>
+          <p className="max-w-xl text-sm font-medium leading-relaxed text-slate-500 dark:text-slate-400">
+            Monitor and manage your private prediction market positions. Encrypted data is decrypted locally using your wallet signature.
+          </p>
+        </div>
       </div>
 
       {!address ? (
-        <div className="surface p-8 text-center">
-          <p className="subtle">Connect wallet to view your ShieldBet positions.</p>
+        <div className="surface p-20 text-center">
+          <p className="text-slate-400 font-bold uppercase tracking-widest">Connect wallet to view portfolio</p>
         </div>
       ) : (
         <MyBetsTable rows={rows} />

@@ -3,7 +3,7 @@ import type { WalletClient } from "viem";
 import { logInfo } from "@/lib/telemetry";
 import { resolveFhevmEnvConfig } from "@/lib/fhevm-config";
 
-export type BetOutcome = 1 | 2;
+export type BetOutcome = number;
 
 export interface EncryptedBetPayload {
   encOutcome: `0x${string}`;

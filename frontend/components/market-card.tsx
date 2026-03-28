@@ -1,18 +1,19 @@
 "use client";
 
-import { Lock, ShieldAlert } from "lucide-react";
+import { Lock, ShieldAlert, Timer } from "lucide-react";
 import { useMemo } from "react";
 import { formatEther } from "viem";
 import { InteractiveLink } from "@/components/interactive-link";
 import { cidToExplorer, formatDeadline, getCountdown } from "@/lib/format";
-import { getEncryptedBandCount, getMarketStatus, MarketCategory, renderEncryptedDots } from "@/lib/market-ui";
+import { getEncryptedBandCount, getMarketStatus, getMarketType, MarketCategory, renderEncryptedDots } from "@/lib/market-ui";
 
 interface MarketCardProps {
   marketId: bigint;
   question: string;
   deadline: bigint;
   outcome: number;
-  resolved: boolean;
+  status: number;
+  marketType: number;
   category: MarketCategory;
   metadataCid: string;
   resolutionCid: string;
@@ -28,117 +29,92 @@ const categoryStyles: Record<string, string> = {
 };
 
 const statusStyles: Record<string, string> = {
-  Open: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300",
-  "Closing Soon": "bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-300",
-  Closed: "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300",
-  Resolved: "bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300"
+  Active: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300",
+  Expired: "bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-300",
+  Proposed: "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300",
+  Disputed: "bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-300",
+  Finalized: "bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300"
 };
 
-function outcomeLabel(outcome: number) {
-  if (outcome === 1) return "YES";
-  if (outcome === 2) return "NO";
-  if (outcome === 3) return "Cancelled";
-  return "Unresolved";
-}
-
-export function MarketCard({ marketId, question, deadline, outcome, resolved, category, metadataCid, resolutionCid, poolBalanceWei }: MarketCardProps) {
-  const status = getMarketStatus(deadline, resolved);
-  const closed = status === "Closed";
-
+export function MarketCard({ 
+  marketId, 
+  question, 
+  deadline, 
+  outcome, 
+  status: rawStatus, 
+  marketType: rawType, 
+  category, 
+  metadataCid, 
+  resolutionCid, 
+  poolBalanceWei 
+}: MarketCardProps) {
+  const status = getMarketStatus(rawStatus, deadline);
+  const mType = getMarketType(rawType);
+  
   const encryptedBandCount = useMemo(() => getEncryptedBandCount(marketId), [marketId]);
   const encryptedBandText = renderEncryptedDots(encryptedBandCount);
 
   return (
-    <article className="surface group p-4 transition hover:-translate-y-0.5 hover:shadow-md md:p-5">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${categoryStyles[category]}`}>{category}</span>
-        <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusStyles[status]}`}>{status}</span>
+    <article className="surface group relative flex flex-col p-5 hover:shadow-xl transition-all hover:-translate-y-1">
+      <div className="mb-4 flex items-center justify-between">
+        <div className="flex gap-2">
+          <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${categoryStyles[category]}`}>{category}</span>
+          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:bg-slate-800 dark:text-slate-400">{mType}</span>
+        </div>
+        <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${statusStyles[status]}`}>{status}</span>
       </div>
 
       <InteractiveLink
         href={`/markets/${marketId}`}
-        pendingClassName="opacity-85"
-        className="block transition group-data-[pending=true]:opacity-85"
+        className="flex-1"
       >
-        <h2 className="line-clamp-2 text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-100">{question}</h2>
+        <h2 className="line-clamp-2 text-xl font-bold tracking-tight text-slate-900 group-hover:text-indigo-600 dark:text-slate-100 dark:group-hover:text-indigo-400 transition-colors">
+          {question}
+        </h2>
       </InteractiveLink>
 
-      <div className="mt-3 space-y-1">
-        {resolved ? (
-          <>
-            <p className="text-sm text-slate-600 dark:text-slate-400">Market closed {formatDeadline(deadline)}</p>
-            <p className="text-sm text-slate-600 dark:text-slate-400">Outcome {outcomeLabel(outcome)}</p>
-          </>
-        ) : closed ? (
-          <p className="text-sm text-slate-600 dark:text-slate-400">Market closed {formatDeadline(deadline)}</p>
-        ) : (
-          <>
-            <p className="text-sm text-slate-600 dark:text-slate-400">{getCountdown(deadline)}</p>
-            <p className="text-sm text-slate-600 dark:text-slate-400">Closing {formatDeadline(deadline)}</p>
-          </>
-        )}
-        <p className="text-sm text-slate-600 dark:text-slate-400">Pool balance {Number(formatEther(poolBalanceWei)).toFixed(4)} ETH</p>
-      </div>
-
-      <div className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50/70 p-3 dark:border-indigo-500/30 dark:bg-indigo-500/10">
-        <div className="flex items-center justify-between">
-          <p className="text-sm font-medium text-indigo-700 dark:text-indigo-300">Encrypted side activity</p>
-          <Lock className="enc-pulse h-4 w-4 text-indigo-500" />
+      <div className="mt-4 space-y-3">
+        <div className="flex items-center justify-between text-xs font-medium text-slate-500 dark:text-slate-400">
+          <span className="flex items-center gap-1.5"><Timer className="h-4 w-4" /> {status === "Active" ? "Ends in " + getCountdown(deadline) : "Closed " + formatDeadline(deadline)}</span>
+          <span className="font-bold text-slate-900 dark:text-slate-100">{Number(formatEther(poolBalanceWei)).toFixed(4)} ETH</span>
         </div>
-        <p className="font-mono-ui mt-1 text-sm text-indigo-700 dark:text-indigo-300">{encryptedBandText} encrypted</p>
-        <p className="mt-2 text-xs text-indigo-700/80 dark:text-indigo-300/80" title="Wallet side selection stays encrypted until settlement data is opened after resolution.">
-          Privacy band only. In v1, stake size is public while side selection stays encrypted.
-        </p>
+
+        <div className="rounded-2xl bg-indigo-50/50 p-4 dark:bg-indigo-500/5 border border-indigo-100 dark:border-indigo-500/10">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-bold uppercase tracking-wider text-indigo-700 dark:text-indigo-300">Confidentiality Band</p>
+            <Lock className="h-3.5 w-3.5 text-indigo-500" />
+          </div>
+          <div className="mt-2 flex items-center gap-1.5">
+            <span className="text-xl leading-none text-indigo-500/30 dark:text-indigo-400/20 line-through decoration-indigo-500/50 decoration-2">
+              {encryptedBandText}
+            </span>
+            <span className="text-xs font-medium text-indigo-900 dark:text-indigo-200">
+              {encryptedBandCount} Encrypted Position{encryptedBandCount !== 1 ? "s" : ""}
+            </span>
+          </div>
+        </div>
       </div>
 
-      {resolved && (
-        <p className="mt-3 inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700 dark:bg-slate-900 dark:text-slate-300">
-          <ShieldAlert className="h-3.5 w-3.5" /> Final state: {outcomeLabel(outcome)}
-        </p>
+      {status === "Finalized" ? (
+        <div className="mt-4 rounded-xl bg-slate-900 p-3 text-center dark:bg-slate-800">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Official Outcome</p>
+          <p className="mt-1 text-sm font-bold text-white">Index {outcome}</p>
+        </div>
+      ) : (
+        <InteractiveLink
+          href={`/markets/${marketId}`}
+          className="mt-4 w-full rounded-xl bg-slate-900 py-3 text-center text-sm font-bold text-white transition hover:bg-slate-800 active:scale-[0.98] dark:bg-indigo-600 dark:hover:bg-indigo-500"
+        >
+          {status === "Active" ? "PLACE POSITION" : "VIEW DETAILS"}
+        </InteractiveLink>
       )}
 
-      <div className="mt-4 grid grid-cols-2 gap-2">
-        {resolved || closed ? (
-          <>
-            <div className="rounded-lg bg-slate-200 px-3 py-2 text-center text-sm font-semibold text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-              YES
-            </div>
-            <div className="rounded-lg bg-slate-200 px-3 py-2 text-center text-sm font-semibold text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-              NO
-            </div>
-          </>
-        ) : (
-          <>
-            <InteractiveLink
-              href={`/markets/${marketId}?side=yes`}
-              pendingClassName="scale-[0.99] opacity-85"
-              className="rounded-lg bg-emerald-500 px-3 py-2 text-center text-sm font-semibold text-white transition hover:scale-[1.02] hover:bg-emerald-600"
-            >
-              YES
-            </InteractiveLink>
-            <InteractiveLink
-              href={`/markets/${marketId}?side=no`}
-              pendingClassName="scale-[0.99] opacity-85"
-              className="rounded-lg bg-rose-500 px-3 py-2 text-center text-sm font-semibold text-white transition hover:scale-[1.02] hover:bg-rose-600"
-            >
-              NO
-            </InteractiveLink>
-          </>
-        )}
-      </div>
-
-      <div className="mt-4 flex flex-wrap gap-3 text-xs font-medium text-slate-500 dark:text-slate-400">
-        {metadataCid && (
-          <a href={cidToExplorer(metadataCid)} target="_blank" rel="noreferrer" className="underline underline-offset-2">
-            Market CID
-          </a>
-        )}
-        {resolutionCid && (
-          <a href={cidToExplorer(resolutionCid)} target="_blank" rel="noreferrer" className="underline underline-offset-2">
-            Resolution CID
-          </a>
-        )}
-      </div>
+      {metadataCid && (
+        <div className="mt-4 flex gap-3 opacity-0 group-hover:opacity-100 transition-opacity">
+          <a href={cidToExplorer(metadataCid)} target="_blank" rel="noreferrer" className="text-[10px] font-bold text-slate-400 hover:text-indigo-500 transition-colors uppercase">Metadata CID</a>
+          {resolutionCid && <a href={cidToExplorer(resolutionCid)} target="_blank" rel="noreferrer" className="text-[10px] font-bold text-slate-400 hover:text-indigo-500 transition-colors uppercase">Resolution CID</a>}
+        </div>
+      )}
     </article>
   );
 }

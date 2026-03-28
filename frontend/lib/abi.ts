@@ -15,10 +15,13 @@ export const shieldBetAbi = [
       { name: "question", type: "string" },
       { name: "deadline", type: "uint256" },
       { name: "outcome", type: "uint8" },
-      { name: "resolved", type: "bool" },
-      { name: "totalYes", type: "bytes32" },
-      { name: "totalNo", type: "bytes32" },
-      { name: "creator", type: "address" }
+      { name: "status", type: "uint8" },
+      { name: "marketType", type: "uint8" },
+      { name: "creator", type: "address" },
+      { name: "disputeWindowEnd", type: "uint256" },
+      { name: "proposedOutcome", type: "uint8" },
+      { name: "proposer", type: "address" },
+      { name: "challenger", type: "address" }
     ]
   },
   {
@@ -82,20 +85,6 @@ export const shieldBetAbi = [
   },
   {
     type: "function",
-    name: "resolverSigner",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "address" }]
-  },
-  {
-    type: "function",
-    name: "settlementSigner",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "address" }]
-  },
-  {
-    type: "function",
     name: "stakeAmounts",
     stateMutability: "view",
     inputs: [
@@ -120,7 +109,9 @@ export const shieldBetAbi = [
     stateMutability: "nonpayable",
     inputs: [
       { name: "question", type: "string" },
-      { name: "deadline", type: "uint256" }
+      { name: "deadline", type: "uint256" },
+      { name: "marketType", type: "uint8" },
+      { name: "outcomeLabels", type: "string[]" }
     ],
     outputs: [{ name: "marketId", type: "uint256" }]
   },
@@ -131,6 +122,8 @@ export const shieldBetAbi = [
     inputs: [
       { name: "question", type: "string" },
       { name: "deadline", type: "uint256" },
+      { name: "marketType", type: "uint8" },
+      { name: "outcomeLabels", type: "string[]" },
       { name: "category", type: "string" },
       { name: "resolutionCriteria", type: "string" },
       { name: "resolutionSource", type: "string" }
@@ -181,64 +174,28 @@ export const shieldBetAbi = [
   },
   {
     type: "function",
-    name: "resolveMarket",
-    stateMutability: "nonpayable",
+    name: "proposeOutcome",
+    stateMutability: "payable",
     inputs: [
       { name: "marketId", type: "uint256" },
-      { name: "outcome", type: "uint8" }
+      { name: "outcomeIndex", type: "uint8" }
     ],
     outputs: []
   },
   {
     type: "function",
-    name: "resolveMarketWithSig",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "marketId", type: "uint256" },
-      { name: "outcome", type: "uint8" },
-      { name: "expiry", type: "uint256" },
-      { name: "signature", type: "bytes" }
-    ],
-    outputs: []
-  },
-  {
-    type: "function",
-    name: "cancelUnresolvedMarket",
-    stateMutability: "nonpayable",
+    name: "challengeOutcome",
+    stateMutability: "payable",
     inputs: [{ name: "marketId", type: "uint256" }],
     outputs: []
   },
   {
     type: "function",
-    name: "setMarketFeeBasisPoints",
+    name: "finalizeOutcome",
     stateMutability: "nonpayable",
     inputs: [
       { name: "marketId", type: "uint256" },
-      { name: "feeBps", type: "uint256" }
-    ],
-    outputs: []
-  },
-  {
-    type: "function",
-    name: "computeAndAssignPayout",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "marketId", type: "uint256" },
-      { name: "winner", type: "address" },
-      { name: "winnerBetAmount", type: "uint256" },
-      { name: "totalWinningSide", type: "uint256" }
-    ],
-    outputs: []
-  },
-  {
-    type: "function",
-    name: "computeAndAssignPayouts",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "marketId", type: "uint256" },
-      { name: "winners", type: "address[]" },
-      { name: "winnerBetAmounts", type: "uint256[]" },
-      { name: "totalWinningSide", type: "uint256" }
+      { name: "finalOutcome", type: "uint8" }
     ],
     outputs: []
   },
@@ -264,18 +221,6 @@ export const shieldBetAbi = [
     name: "claimWinnings",
     stateMutability: "nonpayable",
     inputs: [{ name: "marketId", type: "uint256" }],
-    outputs: []
-  },
-  {
-    type: "function",
-    name: "claimWinningsWithSig",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "marketId", type: "uint256" },
-      { name: "totalWinningSide", type: "uint256" },
-      { name: "expiry", type: "uint256" },
-      { name: "signature", type: "bytes" }
-    ],
     outputs: []
   },
   {
@@ -324,34 +269,28 @@ export const shieldBetAbi = [
   },
   {
     type: "function",
-    name: "getClaimQuote",
+    name: "getOutcomeTotals",
     stateMutability: "view",
-    inputs: [
-      { name: "marketId", type: "uint256" },
-      { name: "user", type: "address" }
-    ],
-    outputs: [
-      { name: "payout", type: "uint256" },
-      { name: "eligible", type: "bool" }
-    ]
+    inputs: [{ name: "marketId", type: "uint256" }],
+    outputs: [{ name: "", type: "bytes32[]" }]
   },
   {
     type: "function",
-    name: "quoteWinnerPayout",
+    name: "getOutcomeLabels",
     stateMutability: "view",
-    inputs: [
-      { name: "marketId", type: "uint256" },
-      { name: "winner", type: "address" },
-      { name: "totalWinningSide", type: "uint256" }
-    ],
-    outputs: [
-      { name: "payout", type: "uint256" },
-      { name: "eligible", type: "bool" }
-    ]
+    inputs: [{ name: "marketId", type: "uint256" }],
+    outputs: [{ name: "", type: "string[]" }]
   },
   {
     type: "function",
-    name: "RESOLUTION_GRACE_PERIOD",
+    name: "DISPUTE_WINDOW",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }]
+  },
+  {
+    type: "function",
+    name: "ORACLE_STAKE",
     stateMutability: "view",
     inputs: [],
     outputs: [{ name: "", type: "uint256" }]

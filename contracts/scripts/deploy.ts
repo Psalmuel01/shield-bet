@@ -2,25 +2,17 @@ import { ethers } from "hardhat";
 
 async function main() {
   const [deployer] = await ethers.getSigners();
+  console.log("Deploying ShieldBet with account:", deployer.address);
+
   const ShieldBet = await ethers.getContractFactory("ShieldBet");
   const contract = await ShieldBet.deploy();
   await contract.waitForDeployment();
 
   const address = await contract.getAddress();
-  const resolverSigner = process.env.RESOLVER_SIGNER_ADDRESS || deployer.address;
-  const settlementSigner = process.env.SETTLEMENT_SIGNER_ADDRESS || deployer.address;
+  console.log("ShieldBet deployed to:", address);
 
-  if ((await contract.resolverSigner()) !== resolverSigner) {
-    await (await contract.setResolverSigner(resolverSigner)).wait();
-  }
-
-  if ((await contract.settlementSigner()) !== settlementSigner) {
-    await (await contract.setSettlementSigner(settlementSigner)).wait();
-  }
-
-  console.log("ShieldBet deployed:", address);
-  console.log("Resolver signer:", resolverSigner);
-  console.log("Settlement signer:", settlementSigner);
+  // No initial configuration required as the Optimistic Oracle architecture
+  // is decentralized and doesn't rely on specific resolver/settlement signers.
 }
 
 main().catch((error) => {

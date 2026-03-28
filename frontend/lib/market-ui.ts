@@ -1,5 +1,6 @@
 export type MarketCategory = "Crypto" | "Politics" | "Sports" | "Science" | "Other";
-export type MarketStatus = "Open" | "Closing Soon" | "Closed" | "Resolved";
+export type MarketStatus = "Active" | "Expired" | "Proposed" | "Disputed" | "Finalized";
+export type MarketType = "Binary" | "Categorical";
 
 const MARKET_CATEGORIES: MarketCategory[] = ["Crypto", "Politics", "Sports", "Science", "Other"];
 
@@ -25,13 +26,19 @@ export function coerceMarketCategory(value: string | undefined | null): MarketCa
   return MARKET_CATEGORIES.includes(value as MarketCategory) ? (value as MarketCategory) : "Other";
 }
 
-export function getMarketStatus(deadline: bigint, resolved: boolean): MarketStatus {
-  if (resolved) return "Resolved";
+export function getMarketStatus(statusInt: number, deadline: bigint): MarketStatus {
+  const statuses: MarketStatus[] = ["Active", "Expired", "Proposed", "Disputed", "Finalized"];
+  let status = statuses[statusInt] || "Active";
 
-  const diffMs = Number(deadline) * 1000 - Date.now();
-  if (diffMs <= 0) return "Closed";
-  if (diffMs <= 24 * 60 * 60 * 1000) return "Closing Soon";
-  return "Open";
+  if (status === "Active" && Number(deadline) * 1000 < Date.now()) {
+    return "Expired";
+  }
+
+  return status;
+}
+
+export function getMarketType(typeInt: number): MarketType {
+  return typeInt === 1 ? "Categorical" : "Binary";
 }
 
 export function getEncryptedBandCount(seed: bigint | number, min = 4, max = 10): number {

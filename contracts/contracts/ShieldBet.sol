@@ -12,24 +12,27 @@ contract ShieldBet is ZamaEthereumConfig, Ownable {
     bytes32 private constant VERSION_HASH = keccak256("1");
     uint256 private constant SECP256K1N_DIV_2 =
         0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0;
-    uint8 public constant OUTCOME_UNRESOLVED = 0;
-    uint8 public constant OUTCOME_YES = 1;
-    uint8 public constant OUTCOME_NO = 2;
-    uint8 public constant OUTCOME_CANCELLED = 3;
-    uint256 public constant RESOLUTION_GRACE_PERIOD = 7 days;
-    bytes32 private constant RESOLUTION_AUTH_TYPEHASH =
-        keccak256("ResolutionAuth(uint256 marketId,uint8 outcome,uint256 expiry)");
-    bytes32 private constant CLAIM_AUTH_TYPEHASH =
-        keccak256("ClaimAuth(uint256 marketId,address claimant,uint8 resolvedOutcome,uint256 totalWinningSide,uint256 expiry)");
+
+    enum MarketType { Binary, Categorical }
+    enum MarketStatus { Active, Expired, Proposed, Disputed, Finalized }
+
+    uint256 public constant DISPUTE_WINDOW = 5 minutes;
+    uint256 public constant ORACLE_STAKE = 0.01 ether;
+    uint256 public constant PLATFORM_FEE_PERCENT = 10; // 10% of stake
 
     struct Market {
         string question;
         uint256 deadline;
-        uint8 outcome; // 0 = unresolved, 1 = YES, 2 = NO, 3 = cancelled
-        bool resolved;
-        euint64 totalYes;
-        euint64 totalNo;
+        uint8 outcome; // Final outcome index
+        MarketStatus status;
+        MarketType marketType;
+        string[] outcomeLabels;
+        euint64[] outcomeTotals;
         address creator;
+        uint256 disputeWindowEnd;
+        uint8 proposedOutcome;
+        address proposer;
+        address challenger;
     }
 
     struct MarketDetails {
@@ -40,8 +43,6 @@ contract ShieldBet is ZamaEthereumConfig, Ownable {
 
     uint256 public marketCount;
     bytes32 private immutable DOMAIN_SEPARATOR;
-    address public resolverSigner;
-    address public settlementSigner;
 
     mapping(uint256 => Market) public markets;
     mapping(uint256 => MarketDetails) private marketDetails;
@@ -60,39 +61,37 @@ contract ShieldBet is ZamaEthereumConfig, Ownable {
     mapping(uint256 => bool) public feeLocked;
     uint256 public accruedFees;
 
-    // Assigned after market resolution by the owner/oracle flow (e.g. Lit Action backend).
+    // Assigned after market resolution by the owner/oracle flow.
     mapping(uint256 => mapping(address => uint256)) public claimablePayouts;
-
     mapping(uint256 => string) public marketMetadataCID;
     mapping(uint256 => string) public marketResolutionCID;
 
-    event MarketCreated(uint256 indexed marketId, string question, uint256 deadline, address indexed creator);
+    event MarketCreated(uint256 indexed marketId, string question, uint256 deadline, address indexed creator, MarketType marketType);
     event MarketMetadataAnchored(uint256 indexed marketId, string cid);
     event BetPlaced(uint256 indexed marketId, address indexed bettor, bytes32 encOutcomeHandle, uint256 stakeAmountWei);
-    event MarketResolved(uint256 indexed marketId, uint8 outcome);
-    event MarketCancelled(uint256 indexed marketId);
+    event OutcomeProposed(uint256 indexed marketId, uint8 outcome, address indexed proposer);
+    event OutcomeChallenged(uint256 indexed marketId, address indexed challenger);
+    event MarketFinalized(uint256 indexed marketId, uint8 outcome);
     event MarketResolutionAnchored(uint256 indexed marketId, string cid);
     event SettlementDataOpened(uint256 indexed marketId, address indexed bettor);
     event MarketTotalsOpened(uint256 indexed marketId);
     event PayoutAssigned(uint256 indexed marketId, address indexed winner, uint256 payoutAmount);
     event WinningsClaimed(uint256 indexed marketId, address indexed winner, uint256 payoutAmount);
     event FeesWithdrawn(address indexed recipient, uint256 amount);
-    event ResolverSignerUpdated(address indexed signer);
-    event SettlementSignerUpdated(address indexed signer);
 
     error MarketNotFound();
     error DeadlineMustBeFuture();
     error MarketExpired();
-    error MarketAlreadyResolved();
+    error MarketAlreadyProposed();
+    error MarketNotExpired();
     error InvalidOutcome();
     error AlreadyHasPosition();
     error InvalidBetAmount();
-    error MarketNotResolved();
+    error MarketNotFinalized();
     error AlreadyClaimed();
     error NoClaimablePayout();
     error NotMarketCreator();
     error InsufficientPoolBalance();
-    error MarketStillOpen();
     error InvalidWinningTotals();
     error FeeTooHigh();
     error PayoutExceedsBalance();
@@ -100,106 +99,81 @@ contract ShieldBet is ZamaEthereumConfig, Ownable {
     error NothingToWithdraw();
     error MarketCancelledState();
     error MarketAlreadyFinalized();
-    error ResolutionGracePeriodNotElapsed();
     error InvalidStakeAmount();
     error InvalidAddress();
-    error ResolverSignerNotConfigured();
-    error SettlementSignerNotConfigured();
-    error SignatureExpired();
-    error InvalidResolverSignature();
-    error InvalidSettlementSignature();
-    error SettlementDataUnavailable();
+    error InsufficientStake();
+    error DisputeWindowNotExpired();
+    error DisputeWindowExpired();
+    error NotInProposedState();
+    error NotInDisputedState();
 
     constructor() Ownable(msg.sender) {
         DOMAIN_SEPARATOR = keccak256(
             abi.encode(EIP712_DOMAIN_TYPEHASH, NAME_HASH, VERSION_HASH, block.chainid, address(this))
         );
-        resolverSigner = msg.sender;
-        settlementSigner = msg.sender;
     }
 
-    function createMarket(string calldata question, uint256 deadline) external returns (uint256 marketId) {
-        return _createMarket(question, deadline, "", "", "");
+    function createMarket(
+        string calldata question,
+        uint256 deadline,
+        MarketType marketType,
+        string[] calldata outcomeLabels
+    ) external returns (uint256 marketId) {
+        return _createMarket(question, deadline, marketType, outcomeLabels, "", "", "");
     }
 
     function createMarketWithMetadata(
         string calldata question,
         uint256 deadline,
+        MarketType marketType,
+        string[] calldata outcomeLabels,
         string calldata category,
         string calldata resolutionCriteria,
         string calldata resolutionSource
     ) external returns (uint256 marketId) {
-        return _createMarket(question, deadline, category, resolutionCriteria, resolutionSource);
-    }
-
-    function getMarketDetails(
-        uint256 marketId
-    ) external view returns (string memory category, string memory resolutionCriteria, string memory resolutionSource) {
-        _requireMarket(marketId);
-        MarketDetails storage details = marketDetails[marketId];
-        return (details.category, details.resolutionCriteria, details.resolutionSource);
+        return _createMarket(question, deadline, marketType, outcomeLabels, category, resolutionCriteria, resolutionSource);
     }
 
     function _createMarket(
         string memory question,
         uint256 deadline,
+        MarketType marketType,
+        string[] memory outcomeLabels,
         string memory category,
         string memory resolutionCriteria,
         string memory resolutionSource
     ) internal returns (uint256 marketId) {
         if (deadline <= block.timestamp) revert DeadlineMustBeFuture();
+        if (marketType == MarketType.Binary && outcomeLabels.length != 2) revert InvalidOutcome();
+        if (marketType == MarketType.Categorical && outcomeLabels.length < 2) revert InvalidOutcome();
 
         marketId = ++marketCount;
-        markets[marketId] = Market({
-            question: question,
-            deadline: deadline,
-            outcome: OUTCOME_UNRESOLVED,
-            resolved: false,
-            totalYes: FHE.asEuint64(0),
-            totalNo: FHE.asEuint64(0),
-            creator: msg.sender
-        });
+         Market storage market = markets[marketId];
+        market.question = question;
+        market.deadline = deadline;
+        market.status = MarketStatus.Active;
+        market.marketType = marketType;
+        market.outcomeLabels = outcomeLabels;
+        market.creator = msg.sender;
+
+        for (uint i = 0; i < outcomeLabels.length; i++) {
+            market.outcomeTotals.push(FHE.asEuint64(0));
+            FHE.allowThis(market.outcomeTotals[i]);
+        }
+
         marketDetails[marketId] = MarketDetails({
             category: category,
             resolutionCriteria: resolutionCriteria,
             resolutionSource: resolutionSource
         });
 
-        // Contract must retain access to encrypted accumulators across txs.
-        FHE.allowThis(markets[marketId].totalYes);
-        FHE.allowThis(markets[marketId].totalNo);
-
-        emit MarketCreated(marketId, question, deadline, msg.sender);
+        emit MarketCreated(marketId, question, deadline, msg.sender, marketType);
     }
 
-    function anchorMarketMetadataCID(uint256 marketId, string calldata cid) external {
-        Market storage market = _requireMarket(marketId);
-        if (market.creator != msg.sender) revert NotMarketCreator();
-
-        marketMetadataCID[marketId] = cid;
-        emit MarketMetadataAnchored(marketId, cid);
-    }
-
-    function setResolverSigner(address signer) external onlyOwner {
-        if (signer == address(0)) revert InvalidAddress();
-        resolverSigner = signer;
-        emit ResolverSignerUpdated(signer);
-    }
-
-    function setSettlementSigner(address signer) external onlyOwner {
-        if (signer == address(0)) revert InvalidAddress();
-        settlementSigner = signer;
-        emit SettlementSignerUpdated(signer);
-    }
-
-    function placeBet(
-        uint256 marketId,
-        externalEuint8 encOutcome,
-        bytes calldata inputProof
-    ) external payable {
+    function placeBet(uint256 marketId, externalEuint8 encOutcome, bytes calldata inputProof) external payable {
         Market storage market = _requireMarket(marketId);
         if (block.timestamp >= market.deadline) revert MarketExpired();
-        if (market.resolved) revert MarketAlreadyResolved();
+        if (market.status != MarketStatus.Active) revert MarketAlreadyProposed();
         if (hasPosition[marketId][msg.sender]) revert AlreadyHasPosition();
         if (msg.value == 0) revert InvalidBetAmount();
         if (msg.value > type(uint64).max) revert InvalidStakeAmount();
@@ -207,7 +181,6 @@ contract ShieldBet is ZamaEthereumConfig, Ownable {
         euint8 outcome = FHE.fromExternal(encOutcome, inputProof);
         euint64 amount = FHE.asEuint64(uint64(msg.value));
 
-        // User and contract can reuse encrypted bet handles.
         FHE.allowThis(outcome);
         FHE.allow(outcome, msg.sender);
         FHE.allowThis(amount);
@@ -218,109 +191,82 @@ contract ShieldBet is ZamaEthereumConfig, Ownable {
         totalPool[marketId] += msg.value;
         marketPoolBalance[marketId] += msg.value;
 
-        // Encrypted pool updates without decrypting outcome/amount.
-        ebool isYes = FHE.eq(outcome, FHE.asEuint8(1));
-        euint64 yesDelta = FHE.select(isYes, amount, FHE.asEuint64(0));
-        euint64 noDelta = FHE.select(isYes, FHE.asEuint64(0), amount);
-
-        market.totalYes = FHE.add(market.totalYes, yesDelta);
-        market.totalNo = FHE.add(market.totalNo, noDelta);
-
-        FHE.allowThis(market.totalYes);
-        FHE.allowThis(market.totalNo);
+        // Update outcome totals privately.
+        for (uint8 i = 0; i < market.outcomeLabels.length; i++) {
+            ebool isChoice = FHE.eq(outcome, FHE.asEuint8(i));
+            euint64 delta = FHE.select(isChoice, amount, FHE.asEuint64(0));
+            market.outcomeTotals[i] = FHE.add(market.outcomeTotals[i], delta);
+            FHE.allowThis(market.outcomeTotals[i]);
+        }
 
         emit BetPlaced(marketId, msg.sender, externalEuint8.unwrap(encOutcome), msg.value);
     }
 
-    function resolveMarket(uint256 marketId, uint8 outcome) external onlyOwner {
-        _resolveMarket(marketId, outcome);
-    }
-
-    function resolveMarketWithSig(uint256 marketId, uint8 outcome, uint256 expiry, bytes calldata signature) external {
-        address signer = resolverSigner;
-        if (signer == address(0)) revert ResolverSignerNotConfigured();
-        if (block.timestamp > expiry) revert SignatureExpired();
-
-        bytes32 digest = _hashTypedData(keccak256(abi.encode(RESOLUTION_AUTH_TYPEHASH, marketId, outcome, expiry)));
-        if (_recoverSigner(digest, signature) != signer) revert InvalidResolverSignature();
-
-        _resolveMarket(marketId, outcome);
-    }
-
-    function _resolveMarket(uint256 marketId, uint8 outcome) internal {
+    function proposeOutcome(uint256 marketId, uint8 outcomeIndex) external payable {
         Market storage market = _requireMarket(marketId);
-        if (market.resolved) revert MarketAlreadyResolved();
-        if (block.timestamp < market.deadline) revert MarketStillOpen();
-        if (outcome != OUTCOME_YES && outcome != OUTCOME_NO) revert InvalidOutcome();
+        if (block.timestamp < market.deadline) revert MarketNotExpired();
+        if (market.status != MarketStatus.Active) revert MarketAlreadyProposed();
+        if (outcomeIndex >= market.outcomeLabels.length) revert InvalidOutcome();
+        if (msg.value < ORACLE_STAKE) revert InsufficientStake();
 
-        market.outcome = outcome;
-        market.resolved = true;
-        _lockMarketFee(marketId);
+        market.status = MarketStatus.Proposed;
+        market.proposedOutcome = outcomeIndex;
+        market.proposer = msg.sender;
+        market.disputeWindowEnd = block.timestamp + DISPUTE_WINDOW;
 
-        emit MarketResolved(marketId, outcome);
+        emit OutcomeProposed(marketId, outcomeIndex, msg.sender);
     }
 
-    function cancelUnresolvedMarket(uint256 marketId) external {
+    function challengeOutcome(uint256 marketId) external payable {
         Market storage market = _requireMarket(marketId);
-        if (market.resolved) revert MarketAlreadyFinalized();
-        if (block.timestamp < market.deadline + RESOLUTION_GRACE_PERIOD) revert ResolutionGracePeriodNotElapsed();
+        if (market.status != MarketStatus.Proposed) revert NotInProposedState();
+        if (block.timestamp > market.disputeWindowEnd) revert DisputeWindowExpired();
+        if (msg.value < ORACLE_STAKE) revert InsufficientStake();
 
-        market.outcome = OUTCOME_CANCELLED;
-        market.resolved = true;
-        feeLocked[marketId] = true;
-        marketFeeAmount[marketId] = 0;
+        market.status = MarketStatus.Disputed;
+        market.challenger = msg.sender;
 
-        emit MarketCancelled(marketId);
+        emit OutcomeChallenged(marketId, msg.sender);
     }
 
-    function anchorResolutionCID(uint256 marketId, string calldata cid) external onlyOwner {
+    function finalizeOutcome(uint256 marketId, uint8 finalOutcome) external onlyOwner {
         Market storage market = _requireMarket(marketId);
-        if (!market.resolved) revert MarketNotResolved();
-
-        marketResolutionCID[marketId] = cid;
-        emit MarketResolutionAnchored(marketId, cid);
-    }
-
-    function setMarketFeeBasisPoints(uint256 marketId, uint256 feeBps) external onlyOwner {
-        Market storage market = _requireMarket(marketId);
-        if (market.resolved) revert MarketAlreadyResolved();
-        if (feeBps > 10_000) revert FeeTooHigh();
-
-        feeBasisPoints[marketId] = feeBps;
-    }
-
-    function computeAndAssignPayout(
-        uint256 marketId,
-        address winner,
-        uint256 winnerBetAmount,
-        uint256 totalWinningSide
-    ) external onlyOwner {
-        _computeAndAssignPayout(marketId, winner, winnerBetAmount, totalWinningSide);
-    }
-
-    function computeAndAssignPayouts(
-        uint256 marketId,
-        address[] calldata winners,
-        uint256[] calldata winnerBetAmounts,
-        uint256 totalWinningSide
-    ) external onlyOwner {
-        uint256 length = winners.length;
-        if (length == 0 || length != winnerBetAmounts.length) revert InvalidAddressArray();
-
-        for (uint256 i = 0; i < length; ++i) {
-            _computeAndAssignPayout(marketId, winners[i], winnerBetAmounts[i], totalWinningSide);
+        if (market.status == MarketStatus.Proposed) {
+            if (block.timestamp <= market.disputeWindowEnd) revert DisputeWindowNotExpired();
+            // Proposer was right, or at least not challenged.
+            market.outcome = market.proposedOutcome;
+            // Return stake to proposer.
+            payable(market.proposer).transfer(ORACLE_STAKE);
+        } else if (market.status == MarketStatus.Disputed) {
+            // Admin manually decides in case of dispute.
+            market.outcome = finalOutcome;
+            if (finalOutcome == market.proposedOutcome) {
+                // Proposer was right.
+                payable(market.proposer).transfer(ORACLE_STAKE * 190 / 100); // Proposer gets challenger's stake (minus platform fee)
+                accruedFees += (ORACLE_STAKE * 10 / 100);
+            } else {
+                // Challenger was right.
+                payable(market.challenger).transfer(ORACLE_STAKE * 190 / 100); // Challenger gets proposer's stake (minus platform fee)
+                accruedFees += (ORACLE_STAKE * 10 / 100);
+            }
+        } else {
+            revert MarketAlreadyFinalized();
         }
+
+        market.status = MarketStatus.Finalized;
+        _lockMarketFee(marketId);
+        emit MarketFinalized(marketId, market.outcome);
     }
 
     function openSettlementData(uint256 marketId, address[] calldata bettors) external {
         Market storage market = _requireMarket(marketId);
-        if (!market.resolved) revert MarketNotResolved();
-        if (market.outcome == OUTCOME_CANCELLED) revert MarketCancelledState();
+        if (market.status != MarketStatus.Finalized) revert MarketNotFinalized();
         if (bettors.length == 0) revert InvalidAddressArray();
 
         if (!marketTotalsOpened[marketId]) {
-            market.totalYes = FHE.makePubliclyDecryptable(market.totalYes);
-            market.totalNo = FHE.makePubliclyDecryptable(market.totalNo);
+            for (uint i = 0; i < market.outcomeTotals.length; i++) {
+                market.outcomeTotals[i] = FHE.makePubliclyDecryptable(market.outcomeTotals[i]);
+            }
             marketTotalsOpened[marketId] = true;
             emit MarketTotalsOpened(marketId);
         }
@@ -339,112 +285,26 @@ contract ShieldBet is ZamaEthereumConfig, Ownable {
         }
     }
 
-    function withdrawAccruedFees(address payable recipient) external onlyOwner {
-        uint256 amount = accruedFees;
-        if (amount == 0) revert NothingToWithdraw();
-        accruedFees = 0;
-
-        (bool sent, ) = recipient.call{value: amount}("");
-        require(sent, "ETH transfer failed");
-
-        emit FeesWithdrawn(recipient, amount);
-    }
-
     function claimWinnings(uint256 marketId) external {
         Market storage market = _requireMarket(marketId);
-        if (!market.resolved) revert MarketNotResolved();
+        if (market.status != MarketStatus.Finalized) revert MarketNotFinalized();
         if (hasClaimed[marketId][msg.sender]) revert AlreadyClaimed();
 
-        uint256 payout;
-        if (market.outcome == OUTCOME_CANCELLED) {
-            payout = stakeAmounts[marketId][msg.sender];
-            if (payout == 0) revert NoClaimablePayout();
-        } else {
-            payout = claimablePayouts[marketId][msg.sender];
-            if (payout == 0) revert NoClaimablePayout();
-            claimablePayouts[marketId][msg.sender] = 0;
-            reservedPayoutBalance[marketId] -= payout;
-        }
+        uint256 payout = claimablePayouts[marketId][msg.sender];
+        if (payout == 0) revert NoClaimablePayout();
+        
+        claimablePayouts[marketId][msg.sender] = 0;
+        reservedPayoutBalance[marketId] -= payout;
 
         _finalizeClaim(marketId, msg.sender, payout);
     }
 
-    function claimWinningsWithSig(
-        uint256 marketId,
-        uint256 totalWinningSide,
-        uint256 expiry,
-        bytes calldata signature
-    ) external {
-        Market storage market = _requireMarket(marketId);
-        if (!market.resolved) revert MarketNotResolved();
-        if (market.outcome == OUTCOME_CANCELLED) revert MarketCancelledState();
-        if (hasClaimed[marketId][msg.sender]) revert AlreadyClaimed();
-
-        address signer = settlementSigner;
-        if (signer == address(0)) revert SettlementSignerNotConfigured();
-        if (block.timestamp > expiry) revert SignatureExpired();
-
-        uint256 winnerStake = stakeAmounts[marketId][msg.sender];
-        if (winnerStake == 0) revert NoClaimablePayout();
-
-        bytes32 digest = _hashTypedData(
-            keccak256(
-                abi.encode(CLAIM_AUTH_TYPEHASH, marketId, msg.sender, market.outcome, totalWinningSide, expiry)
-            )
-        );
-        if (_recoverSigner(digest, signature) != signer) revert InvalidSettlementSignature();
-
-        uint256 payout = _quoteWinnerPayout(marketId, winnerStake, totalWinningSide);
-        _finalizeClaim(marketId, msg.sender, payout);
+    function getOutcomeTotals(uint256 marketId) external view returns (euint64[] memory) {
+        return markets[marketId].outcomeTotals;
     }
 
-    function getMyOutcome(uint256 marketId) external view returns (euint8) {
-        _requireMarket(marketId);
-        return betOutcomes[marketId][msg.sender];
-    }
-
-    function getBetOutcomeHandle(uint256 marketId, address bettor) external view returns (euint8) {
-        _requireMarket(marketId);
-        if (!settlementDataOpened[marketId][bettor]) revert SettlementDataUnavailable();
-        return betOutcomes[marketId][bettor];
-    }
-
-    function getSettlementWinnerHandle(uint256 marketId, address bettor) external view returns (ebool) {
-        _requireMarket(marketId);
-        if (!settlementDataOpened[marketId][bettor]) revert SettlementDataUnavailable();
-        return settlementWinnerFlags[marketId][bettor];
-    }
-
-    function getEncryptedMarketTotals(uint256 marketId) external view onlyOwner returns (euint64 yesTotal, euint64 noTotal) {
-        Market storage market = _requireMarket(marketId);
-        return (market.totalYes, market.totalNo);
-    }
-
-    function getClaimQuote(uint256 marketId, address user) external view returns (uint256 payout, bool eligible) {
-        Market storage market = _requireMarket(marketId);
-        if (!market.resolved || hasClaimed[marketId][user]) return (0, false);
-
-        payout = market.outcome == OUTCOME_CANCELLED ? stakeAmounts[marketId][user] : claimablePayouts[marketId][user];
-        eligible = payout > 0;
-    }
-
-    function quoteWinnerPayout(
-        uint256 marketId,
-        address winner,
-        uint256 totalWinningSide
-    ) external view returns (uint256 payout, bool eligible) {
-        Market storage market = _requireMarket(marketId);
-        if (!market.resolved || market.outcome == OUTCOME_CANCELLED || hasClaimed[marketId][winner]) {
-            return (0, false);
-        }
-
-        uint256 winnerStake = stakeAmounts[marketId][winner];
-        if (winnerStake == 0) {
-            return (0, false);
-        }
-
-        payout = _quoteWinnerPayout(marketId, winnerStake, totalWinningSide);
-        eligible = payout > 0;
+    function getOutcomeLabels(uint256 marketId) external view returns (string[] memory) {
+        return markets[marketId].outcomeLabels;
     }
 
     function _requireMarket(uint256 marketId) internal view returns (Market storage market) {
@@ -452,100 +312,35 @@ contract ShieldBet is ZamaEthereumConfig, Ownable {
         if (market.deadline == 0) revert MarketNotFound();
     }
 
-    function _computeAndAssignPayout(
-        uint256 marketId,
-        address winner,
-        uint256 winnerBetAmount,
-        uint256 totalWinningSide
-    ) internal {
-        Market storage market = _requireMarket(marketId);
-        if (!market.resolved) revert MarketNotResolved();
-        if (market.outcome == OUTCOME_CANCELLED) revert MarketCancelledState();
-        if (!feeLocked[marketId]) revert MarketNotResolved();
-        if (hasClaimed[marketId][winner]) revert AlreadyClaimed();
-        if (winnerBetAmount == 0 || totalWinningSide == 0 || winnerBetAmount > totalWinningSide) revert InvalidWinningTotals();
-        if (stakeAmounts[marketId][winner] != winnerBetAmount) revert InvalidWinningTotals();
-
-        uint256 pool = totalPool[marketId];
-        uint256 distributablePool = pool - marketFeeAmount[marketId];
-        uint256 payout = _quoteWinnerPayout(marketId, winnerBetAmount, totalWinningSide);
-
-        uint256 previousPayout = claimablePayouts[marketId][winner];
-        uint256 reservedBalance = reservedPayoutBalance[marketId];
-        if (payout > previousPayout) {
-            uint256 additionalReservation = payout - previousPayout;
-            if (reservedBalance + additionalReservation > distributablePool) revert InsufficientPoolBalance();
-            reservedPayoutBalance[marketId] = reservedBalance + additionalReservation;
-        } else if (previousPayout > payout) {
-            reservedPayoutBalance[marketId] = reservedBalance - (previousPayout - payout);
-        }
-
-        claimablePayouts[marketId][winner] = payout;
-        emit PayoutAssigned(marketId, winner, payout);
-    }
-
-    function _quoteWinnerPayout(
-        uint256 marketId,
-        uint256 winnerBetAmount,
-        uint256 totalWinningSide
-    ) internal view returns (uint256 payout) {
-        if (winnerBetAmount == 0 || totalWinningSide == 0 || winnerBetAmount > totalWinningSide) revert InvalidWinningTotals();
-
-        uint256 pool = totalPool[marketId];
-        uint256 fee = marketFeeAmount[marketId];
-        uint256 distributablePool = pool - fee;
-        payout = (winnerBetAmount * distributablePool) / totalWinningSide;
-        if (payout > address(this).balance) revert PayoutExceedsBalance();
-    }
-
-    function _finalizeClaim(uint256 marketId, address recipient, uint256 payout) internal {
-        hasClaimed[marketId][recipient] = true;
-        stakeAmounts[marketId][recipient] = 0;
-        marketPoolBalance[marketId] -= payout;
-
-        (bool sent, ) = recipient.call{value: payout}("");
-        require(sent, "ETH transfer failed");
-
-        emit WinningsClaimed(marketId, recipient, payout);
-    }
-
     function _lockMarketFee(uint256 marketId) internal {
         if (feeLocked[marketId]) return;
-
         uint256 fee = (totalPool[marketId] * feeBasisPoints[marketId]) / 10_000;
         marketFeeAmount[marketId] = fee;
         feeLocked[marketId] = true;
         accruedFees += fee;
     }
 
-    function _hashTypedData(bytes32 structHash) internal view returns (bytes32) {
-        return keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
+    function _finalizeClaim(uint256 marketId, address recipient, uint256 payout) internal {
+        hasClaimed[marketId][recipient] = true;
+        marketPoolBalance[marketId] -= payout;
+        payable(recipient).transfer(payout);
+        emit WinningsClaimed(marketId, recipient, payout);
     }
 
-    function _recoverSigner(bytes32 digest, bytes calldata signature) internal pure returns (address signer) {
-        if (signature.length != 65) {
-            return address(0);
-        }
+    // Simplified payout assignment helper for this prototype phase.
+    function assignPayoutManual(uint256 marketId, address winner, uint256 payout) external onlyOwner {
+        Market storage market = _requireMarket(marketId);
+        if (market.status != MarketStatus.Finalized) revert MarketNotFinalized();
+        claimablePayouts[marketId][winner] = payout;
+        reservedPayoutBalance[marketId] += payout;
+        emit PayoutAssigned(marketId, winner, payout);
+    }
 
-        bytes32 r;
-        bytes32 s;
-        uint8 v;
-        assembly {
-            r := calldataload(signature.offset)
-            s := calldataload(add(signature.offset, 0x20))
-            v := byte(0, calldataload(add(signature.offset, 0x40)))
-        }
-
-        if (uint256(s) > SECP256K1N_DIV_2) {
-            return address(0);
-        }
-        if (v < 27) {
-            v += 27;
-        }
-        if (v != 27 && v != 28) {
-            return address(0);
-        }
-
-        signer = ecrecover(digest, v, r, s);
+    function withdrawAccruedFees(address payable recipient) external onlyOwner {
+        uint256 amount = accruedFees;
+        if (amount == 0) revert NothingToWithdraw();
+        accruedFees = 0;
+        recipient.transfer(amount);
+        emit FeesWithdrawn(recipient, amount);
     }
 }

@@ -16,7 +16,8 @@ interface ParsedMarket {
   question: string;
   deadline: bigint;
   outcome: number;
-  resolved: boolean;
+  status: number;
+  marketType: number;
   creator: `0x${string}`;
   metadataCid: string;
   resolutionCid: string;
@@ -39,30 +40,11 @@ export function MarketsDashboard() {
     functionName: "marketCount"
   });
 
-  useEffect(() => {
-    logInfo("markets-dashboard", "read marketCount", {
-      contract: shieldBetConfig.address,
-      marketCount: marketCount?.toString() || "0"
-    });
-  }, [marketCount]);
-
   const ids = useMemo(() => {
-    if (marketCount === undefined || marketCount === null) return [] as bigint[];
-
+    if (!marketCount) return [] as bigint[];
     const count = Number(marketCount);
-    if (!Number.isFinite(count) || count <= 0) return [] as bigint[];
-
-    // Probe both 1-based and 0-based indexing because deployed variants may differ.
-    const oneBased = Array.from({ length: count }, (_, idx) => BigInt(idx + 1));
-    const zeroBased = Array.from({ length: count }, (_, idx) => BigInt(idx));
-    return [...new Set([...oneBased, ...zeroBased].map((value) => value.toString()))].map((value) => BigInt(value));
+    return Array.from({ length: count }, (_, idx) => BigInt(idx + 1));
   }, [marketCount]);
-
-  useEffect(() => {
-    logInfo("markets-dashboard", "derived market ids", {
-      ids: ids.map((id) => id.toString())
-    });
-  }, [ids]);
 
   const contracts = useMemo(
     () =>
@@ -98,21 +80,8 @@ export function MarketsDashboard() {
 
   const { data: marketBatch, isLoading: loadingMarkets, error } = useReadContracts({
     contracts,
-    query: {
-      enabled: contracts.length > 0
-    }
+    query: { enabled: contracts.length > 0 }
   });
-
-  useEffect(() => {
-    if (!marketBatch?.length) return;
-    logInfo("markets-dashboard", "read market batch", {
-      calls: marketBatch.length,
-      statuses: marketBatch.map((entry, idx) => ({
-        idx,
-        status: entry.status
-      }))
-    });
-  }, [marketBatch]);
 
   const markets = useMemo(() => {
     if (!marketBatch?.length) return [] as ParsedMarket[];
@@ -126,33 +95,10 @@ export function MarketsDashboard() {
       const poolBalanceRes = marketBatch[i + 4];
       const marketId = ids[i / 5];
 
-      if (marketRes?.status !== "success" || !marketRes.result) {
-        logWarn("markets-dashboard", "market read failed", {
-          marketId: marketId.toString(),
-          marketStatus: marketRes?.status,
-          marketError: marketRes?.status === "failure" ? String(marketRes.error) : ""
-        });
-        continue;
-      }
+      if (marketRes?.status !== "success" || !marketRes.result) continue;
 
       const market = decodeMarketView(marketRes.result);
-      if (!market) {
-        logWarn("markets-dashboard", "unable to decode market payload", {
-          marketId: marketId.toString(),
-          raw: marketRes.result
-        });
-        continue;
-      }
-
-      const hasSignal =
-        market.question.trim().length > 0 || market.deadline > 0n || market.creator.toLowerCase() !== ZERO_ADDRESS;
-      if (!hasSignal) {
-        logWarn("markets-dashboard", "market skipped as empty/default struct", {
-          marketId: marketId.toString(),
-          market
-        });
-        continue;
-      }
+      if (!market) continue;
 
       const details = detailsRes?.status === "success" ? decodeMarketDetails(detailsRes.result) : null;
       const category = details?.category.trim() ? coerceMarketCategory(details.category.trim()) : inferCategory(market.question);
@@ -162,7 +108,8 @@ export function MarketsDashboard() {
         question: market.question,
         deadline: market.deadline,
         outcome: market.outcome,
-        resolved: market.resolved,
+        status: market.status,
+        marketType: market.marketType,
         creator: market.creator,
         metadataCid: metadataRes?.status === "success" && metadataRes.result ? String(metadataRes.result) : "",
         resolutionCid: resolutionRes?.status === "success" && resolutionRes.result ? String(resolutionRes.result) : "",
@@ -174,20 +121,6 @@ export function MarketsDashboard() {
 
     return rows;
   }, [ids, marketBatch]);
-
-  useEffect(() => {
-    logInfo("markets-dashboard", "parsed markets", {
-      count: markets.length,
-      markets: markets.map((market) => ({
-        marketId: market.marketId.toString(),
-        question: market.question,
-        deadline: market.deadline.toString(),
-        creator: market.creator,
-        metadataCid: market.metadataCid,
-        resolutionCid: market.resolutionCid
-      }))
-    });
-  }, [markets]);
 
   const filtered = useMemo(() => {
     let next = markets;
@@ -212,33 +145,28 @@ export function MarketsDashboard() {
     return next;
   }, [activeTab, address, markets, sortBy]);
 
-  const hasReadMismatch = useMemo(() => {
-    const count = marketCount ? Number(marketCount) : 0;
-    return count > 0 && markets.length === 0;
-  }, [marketCount, markets.length]);
-
   if (loadingCount || loadingMarkets) {
-    return <p className="subtle">Loading encrypted markets...</p>;
-  }
-
-  if (error) {
-    return <p className="text-sm text-rose-500">Unable to load markets. Confirm contract address and RPC in `.env.local`.</p>;
+    return (
+      <div className="surface p-12 text-center">
+        <div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-indigo-500 border-t-transparent"></div>
+        <p className="mt-4 font-bold text-slate-500 animate-pulse">Syncing encrypted data...</p>
+      </div>
+    );
   }
 
   return (
-    <section className="space-y-3">
-      <div className="surface p-4">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+    <section className="space-y-6">
+      <div className="surface p-6">
+        <div className="flex flex-wrap items-center justify-between gap-6">
           <div className="flex flex-wrap items-center gap-2">
             {tabs.map((tab) => (
               <button
                 key={tab}
-                type="button"
                 onClick={() => setActiveTab(tab)}
-                className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                className={`rounded-xl px-4 py-2 text-xs font-bold uppercase tracking-wider shadow-sm transition-all focus:ring-4 focus:ring-indigo-500/10 ${
                   activeTab === tab
-                    ? "bg-indigo-500 text-white"
-                    : "bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+                    ? "bg-indigo-600 text-white shadow-indigo-500/20"
+                    : "bg-white text-slate-500 hover:bg-slate-50 hover:text-slate-900 dark:bg-slate-950 dark:hover:bg-slate-900"
                 }`}
               >
                 {tab}
@@ -246,41 +174,54 @@ export function MarketsDashboard() {
             ))}
           </div>
 
-          <label className="flex items-center gap-2 text-xs font-medium text-slate-600 dark:text-slate-400">
-            Sort
+          <div className="flex items-center gap-3">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Sort By</span>
             <select
               value={sortBy}
-              onChange={(event) => setSortBy(event.target.value as SortOption)}
-              className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+              onChange={(e) => setSortBy(e.target.value as SortOption)}
+              className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-900 outline-none transition focus:border-indigo-500 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
             >
-              {sortOptions.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
+              {sortOptions.map((o) => <option key={o} value={o}>{o}</option>)}
             </select>
-          </label>
+          </div>
         </div>
-
-        <p className="subtle">Encrypted activity bands hide real market size until settlement.</p>
       </div>
 
       {!filtered.length ? (
-        <div className="surface p-8 text-center">
-          <h2 className="section-title mb-2">No markets found</h2>
-          <p className="subtle">
-            {hasReadMismatch
-              ? "Contract reports markets, but reads returned empty/default structs. Check console logs for ABI/indexing mismatch details."
-              : "Try another filter, or create your first confidential market."}
+        <div className="surface p-16 text-center">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-900">
+            <Lock className="h-8 w-8 text-slate-300 dark:text-slate-700" />
+          </div>
+          <h2 className="mt-6 text-2xl font-bold dark:text-white">No Markets Found</h2>
+          <p className="mx-auto mt-2 max-w-sm text-sm text-slate-500">
+            Your selection returned empty results. Try another filter or create a new prediction market.
           </p>
         </div>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {filtered.map((market) => (
             <MarketCard key={market.marketId.toString()} {...market} />
           ))}
         </div>
       )}
     </section>
+  );
+}
+
+function Lock(props: any) {
+  return (
+    <svg 
+      {...props} 
+      xmlns="http://www.w3.org/2000/svg" 
+      width="24" height="24" 
+      viewBox="0 0 24 24" 
+      fill="none" 
+      stroke="currentColor" 
+      strokeWidth="2" 
+      strokeLinecap="round" 
+      strokeLinejoin="round"
+    >
+      <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+    </svg>
   );
 }

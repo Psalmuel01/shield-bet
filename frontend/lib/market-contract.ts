@@ -2,20 +2,19 @@ export interface DecodedMarketView {
   question: string;
   deadline: bigint;
   outcome: number;
-  resolved: boolean;
-  totalYes: `0x${string}`;
-  totalNo: `0x${string}`;
+  status: number;
+  marketType: number;
   creator: `0x${string}`;
+  disputeWindowEnd: bigint;
+  proposedOutcome: number;
+  proposer: `0x${string}`;
+  challenger: `0x${string}`;
 }
 
 export interface DecodedMarketDetails {
   category: string;
   resolutionCriteria: string;
   resolutionSource: string;
-}
-
-function isHex32(value: unknown): value is `0x${string}` {
-  return typeof value === "string" && value.startsWith("0x");
 }
 
 function isAddress(value: unknown): value is `0x${string}` {
@@ -26,25 +25,43 @@ export function decodeMarketView(result: unknown): DecodedMarketView | null {
   if (!result) return null;
 
   const asArray = Array.isArray(result) ? result : null;
-  if (asArray && asArray.length >= 7) {
-    const [question, deadline, outcome, resolved, totalYes, totalNo, creator] = asArray as unknown[];
+  if (asArray && asArray.length >= 10) {
+    const [
+      question, 
+      deadline, 
+      outcome, 
+      status, 
+      marketType, 
+      creator, 
+      disputeWindowEnd, 
+      proposedOutcome, 
+      proposer, 
+      challenger
+    ] = asArray as unknown[];
+
     if (
       typeof question === "string" &&
       typeof deadline === "bigint" &&
       typeof outcome === "number" &&
-      typeof resolved === "boolean" &&
-      isHex32(totalYes) &&
-      isHex32(totalNo) &&
-      isAddress(creator)
+      typeof status === "number" &&
+      typeof marketType === "number" &&
+      isAddress(creator) &&
+      typeof disputeWindowEnd === "bigint" &&
+      typeof proposedOutcome === "number" &&
+      isAddress(proposer) &&
+      isAddress(challenger)
     ) {
       return {
         question,
         deadline,
         outcome,
-        resolved,
-        totalYes,
-        totalNo,
-        creator
+        status,
+        marketType,
+        creator,
+        disputeWindowEnd,
+        proposedOutcome,
+        proposer,
+        challenger
       };
     }
   }
@@ -55,10 +72,13 @@ export function decodeMarketView(result: unknown): DecodedMarketView | null {
       typeof market.question === "string" &&
       typeof market.deadline === "bigint" &&
       typeof market.outcome === "number" &&
-      typeof market.resolved === "boolean" &&
-      isHex32(market.totalYes) &&
-      isHex32(market.totalNo) &&
-      isAddress(market.creator)
+      typeof market.status === "number" &&
+      typeof market.marketType === "number" &&
+      isAddress(market.creator) &&
+      typeof market.disputeWindowEnd === "bigint" &&
+      typeof market.proposedOutcome === "number" &&
+      isAddress(market.proposer) &&
+      isAddress(market.challenger)
     ) {
       return market as DecodedMarketView;
     }

@@ -2,9 +2,22 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams, useSearchParams } from "next/navigation";
-import { Clock3, ExternalLink, FileText, Wallet } from "lucide-react";
-import { formatEther, getAddress, parseAbiItem, parseEther } from "viem";
+import { useParams } from "next/navigation";
+import {
+  Clock3,
+  ExternalLink,
+  FileText,
+  Wallet,
+  ShieldCheck,
+  AlertCircle,
+  Gavel,
+  ArrowRight,
+  ChevronRight,
+  TrendingUp,
+  History,
+  Info
+} from "lucide-react";
+import { formatEther, getAddress, parseEther } from "viem";
 import {
   useAccount,
   useBalance,
@@ -15,114 +28,60 @@ import {
   useWriteContract
 } from "wagmi";
 import { BetPlacement } from "@/components/bet-placement";
-import { ClaimConfirmation, ClaimFlow } from "@/components/claim-flow";
+import { ClaimFlow } from "@/components/claim-flow";
 import { EncryptedActivity } from "@/components/encrypted-activity";
-import { EncryptedBands } from "@/components/encrypted-bands";
 import { RuntimeAlerts } from "@/components/runtime-alerts";
-import { SettlementPlanPanel, type SettlementPlanView } from "@/components/settlement-plan";
-import { BetOutcome, decryptUserHandles, encryptBetInputs } from "@/lib/encryption";
+import { encryptBetInputs, decryptUserHandles } from "@/lib/encryption";
 import { cidToExplorer, formatDeadline, getCountdown } from "@/lib/format";
 import { shieldBetConfig } from "@/lib/contract";
 import { decodeMarketDetails, decodeMarketView } from "@/lib/market-contract";
-import { getEncryptedBandCount, inferCategory, getMarketStatus } from "@/lib/market-ui";
+import { getEncryptedBandCount, getMarketStatus, getMarketType } from "@/lib/market-ui";
 import { getLocalBet, saveLocalBet } from "@/lib/local-bets";
 import { getRuntimeDiagnostics } from "@/lib/runtime-config";
 import { logError, logInfo, logWarn } from "@/lib/telemetry";
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
-const betPlacedEvent = parseAbiItem(
-  "event BetPlaced(uint256 indexed marketId, address indexed bettor, bytes32 encOutcomeHandle, uint256 stakeAmountWei)"
-);
 
-type BetFlowStage = "idle" | "preparing" | "encrypting" | "wallet" | "confirming";
-type SettlementLoadingState = "idle" | "opening" | "loading-plan" | "assigning" | "cancelling";
-
-type PositionLabel = "YES" | "NO" | "Encrypted";
-type ClaimPreviewState = {
-  marketId: string;
-  account: `0x${string}`;
-  eligible: boolean;
-  mode: "refund" | "signed-winner" | "legacy-assigned" | "none";
-  expectedPayoutWei: string;
-  totalWinningSideWei: string;
-  resolvedOutcome: string;
-  checks: string[];
-  reason?: string;
-  settlementOpened?: boolean;
-  legacyAssigned?: boolean;
-};
-
-type ClaimAuthResponse = {
-  marketId: string;
-  account: `0x${string}`;
-  expectedPayoutWei: string;
-  totalWinningSideWei: string;
-  resolvedOutcome: string;
-  expiry: string;
-  signature: `0x${string}`;
-  signer: `0x${string}`;
-  checks: string[];
-  reason?: string;
-};
-
-function formatEthLabel(value: bigint) {
-  return `${Number(formatEther(value)).toFixed(4)} ETH`;
-}
-
-function getOutcomeLabel(outcome: number) {
-  if (outcome === 1) return "YES";
-  if (outcome === 2) return "NO";
-  if (outcome === 3) return "Cancelled";
-  return "Unresolved";
-}
-
-export default function MarketBetPage() {
+export default function MarketDetailPage() {
   const params = useParams<{ id: string }>();
-  const searchParams = useSearchParams();
-  const marketParam = params?.id;
-  const marketId = useMemo(() => BigInt(marketParam || "0"), [marketParam]);
+  const marketId = useMemo(() => BigInt(params?.id || "0"), [params?.id]);
 
-  const initialSide = searchParams?.get("side")?.toLowerCase();
-
-  const [selectedOutcome, setSelectedOutcome] = useState<BetOutcome>(initialSide === "no" ? 2 : 1);
-  const [amount, setAmount] = useState("0.0001");
+  const [selectedOutcome, setSelectedOutcome] = useState<number>(0);
+  const [amount, setAmount] = useState("0.01");
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [isBetting, setIsBetting] = useState(false);
   const [claimOpen, setClaimOpen] = useState(false);
-  const [adminResolveOutcome, setAdminResolveOutcome] = useState<BetOutcome>(1);
-  const [adminMessage, setAdminMessage] = useState<string | null>(null);
-  const [betFlowStage, setBetFlowStage] = useState<BetFlowStage>("idle");
-  const [positionDecrypting, setPositionDecrypting] = useState(false);
-  const [settlementPlan, setSettlementPlan] = useState<SettlementPlanView | null>(null);
-  const [settlementLoading, setSettlementLoading] = useState<SettlementLoadingState>("idle");
-  const [localPosition, setLocalPosition] = useState<PositionLabel>("Encrypted");
-  const [claimPreview, setClaimPreview] = useState<ClaimPreviewState | null>(null);
-  const [claimPreviewLoading, setClaimPreviewLoading] = useState(false);
+  const [decryptedPosition, setDecryptedPosition] = useState<number | null>(null);
+  const [isDecrypting, setIsDecrypting] = useState(false);
 
-  const { address, chainId } = useAccount();
-  const normalizedAddress = address ? getAddress(address) : null;
+  const { address } = useAccount();
   const publicClient = usePublicClient();
   const { data: walletClient } = useWalletClient();
   const { data: balance } = useBalance({ address });
-  const litActionCid = process.env.NEXT_PUBLIC_LIT_ACTION_CID;
-  const expectedChainId = Number(process.env.NEXT_PUBLIC_CHAIN_ID || 11155111);
+  const { writeContractAsync } = useWriteContract();
 
-  const { writeContractAsync, data: hash, isPending } = useWriteContract();
-  const { isLoading: isConfirming } = useWaitForTransactionReceipt({ hash });
-
-  const { data: marketData } = useReadContract({
+  // Contract Reads
+  const { data: marketData, refetch: refetchMarket } = useReadContract({
     ...shieldBetConfig,
     functionName: "markets",
     args: [marketId]
   });
 
-  const { data: ownerAddress } = useReadContract({
-    ...shieldBetConfig,
-    functionName: "owner"
-  });
-
   const { data: metadataCid } = useReadContract({
     ...shieldBetConfig,
     functionName: "marketMetadataCID",
+    args: [marketId]
+  });
+
+  const { data: outcomeLabels } = useReadContract({
+    ...shieldBetConfig,
+    functionName: "getOutcomeLabels",
+    args: [marketId]
+  });
+
+  const { data: outcomeTotals } = useReadContract({
+    ...shieldBetConfig,
+    functionName: "getOutcomeTotals",
     args: [marketId]
   });
 
@@ -132,1192 +91,464 @@ export default function MarketBetPage() {
     args: [marketId]
   });
 
-  const { data: resolutionCid } = useReadContract({
-    ...shieldBetConfig,
-    functionName: "marketResolutionCID",
-    args: [marketId]
-  });
-
   const { data: marketPoolBalance } = useReadContract({
     ...shieldBetConfig,
     functionName: "marketPoolBalance",
     args: [marketId]
   });
 
-  const { data: totalPool } = useReadContract({
+  const { data: oracleStake } = useReadContract({
     ...shieldBetConfig,
-    functionName: "totalPool",
-    args: [marketId]
-  });
-
-  const { data: reservedPayoutBalance } = useReadContract({
-    ...shieldBetConfig,
-    functionName: "reservedPayoutBalance",
-    args: [marketId]
-  });
-
-  const { data: feeBasisPoints } = useReadContract({
-    ...shieldBetConfig,
-    functionName: "feeBasisPoints",
-    args: [marketId]
-  });
-
-  const { data: resolutionGracePeriod } = useReadContract({
-    ...shieldBetConfig,
-    functionName: "RESOLUTION_GRACE_PERIOD"
+    functionName: "ORACLE_STAKE"
   });
 
   const { data: hasPosition } = useReadContract({
     ...shieldBetConfig,
     functionName: "hasPosition",
     args: [marketId, address || ZERO_ADDRESS],
-    query: {
-      enabled: Boolean(address)
-    }
+    query: { enabled: !!address }
   });
 
-  const { data: stakeAmountWei } = useReadContract({
-    ...shieldBetConfig,
-    functionName: "stakeAmounts",
-    args: [marketId, address || ZERO_ADDRESS],
-    query: {
-      enabled: Boolean(address)
-    }
-  });
-
-  const { data: claimQuote } = useReadContract({
-    ...shieldBetConfig,
-    functionName: "getClaimQuote",
-    args: [marketId, address || ZERO_ADDRESS],
-    query: {
-      enabled: Boolean(address && decodeMarketView(marketData)?.resolved)
-    }
-  });
-
-  const { data: encryptedOutcomeHandle } = useReadContract({
+  const { data: myOutcomeHandle } = useReadContract({
     ...shieldBetConfig,
     functionName: "getMyOutcome",
     args: [marketId],
-    query: {
-      enabled: Boolean(address && hasPosition && walletClient)
-    }
+    query: { enabled: !!address && !!hasPosition }
   });
 
+  const parsedMarket = useMemo(() => decodeMarketView(marketData), [marketData]);
+  const parsedDetails = useMemo(() => decodeMarketDetails(marketDetailsData), [marketDetailsData]);
+  const labels = useMemo(() => (outcomeLabels as string[]) || ["YES", "NO"], [outcomeLabels]);
+
+  const status = useMemo(() => {
+    if (!parsedMarket) return "Active";
+    return getMarketStatus(parsedMarket.status, parsedMarket.deadline);
+  }, [parsedMarket]);
+
+  const marketType = useMemo(() => {
+    if (!parsedMarket) return "Binary";
+    return getMarketType(parsedMarket.marketType);
+  }, [parsedMarket]);
+
+  // Decrypt user position
   useEffect(() => {
-    logInfo("market-detail", "read market core", {
-      marketId: marketId.toString(),
-      contract: shieldBetConfig.address,
-      marketData: marketData || null
-    });
-  }, [marketData, marketId]);
-
-  useEffect(() => {
-    logInfo("market-detail", "read market cids", {
-      marketId: marketId.toString(),
-      metadataCid: metadataCid || "",
-      resolutionCid: resolutionCid || "",
-      totalPoolWei: typeof totalPool === "bigint" ? totalPool.toString() : "0",
-      marketPoolBalanceWei: typeof marketPoolBalance === "bigint" ? marketPoolBalance.toString() : "0",
-      reservedPayoutBalanceWei: typeof reservedPayoutBalance === "bigint" ? reservedPayoutBalance.toString() : "0",
-      feeBasisPoints: typeof feeBasisPoints === "bigint" ? feeBasisPoints.toString() : "0"
-    });
-  }, [marketId, metadataCid, resolutionCid, totalPool, marketPoolBalance, reservedPayoutBalance, feeBasisPoints]);
-
-  useEffect(() => {
-    logInfo("market-detail", "read position and claim quote", {
-      marketId: marketId.toString(),
-      account: address || "",
-      hasPosition: Boolean(hasPosition),
-      stakeAmountWei: typeof stakeAmountWei === "bigint" ? stakeAmountWei.toString() : "0",
-      claimQuote: claimQuote
-        ? {
-            payout: claimQuote[0].toString(),
-            eligible: claimQuote[1]
-          }
-        : null,
-      claimPreview: claimPreview
-        ? {
-            mode: claimPreview.mode,
-            eligible: claimPreview.eligible,
-            expectedPayoutWei: claimPreview.expectedPayoutWei,
-            totalWinningSideWei: claimPreview.totalWinningSideWei,
-            reason: claimPreview.reason || ""
-          }
-        : null
-    });
-  }, [marketId, address, hasPosition, stakeAmountWei, claimQuote, claimPreview]);
-
-  useEffect(() => {
-    const bet = getLocalBet(marketId, address);
-    if (!bet) {
-      setLocalPosition("Encrypted");
-      return;
-    }
-
-    setLocalPosition(bet.position);
-  }, [marketId, address, hash]);
-
-  useEffect(() => {
-    if (!normalizedAddress || !walletClient || !hasPosition || !encryptedOutcomeHandle) {
-      return;
-    }
-
-    const userAddress = normalizedAddress;
-    const signer = walletClient;
-    const outcomeHandle = encryptedOutcomeHandle as `0x${string}`;
-
-    let cancelled = false;
-
-    async function loadPosition() {
-      try {
-        setPositionDecrypting(true);
-        const decrypted = await decryptUserHandles({
-          contractAddress: shieldBetConfig.address,
-          userAddress,
-          walletClient: signer,
-          handles: [outcomeHandle]
-        });
-
-        if (cancelled) return;
-
-        const outcomeValue = Number(decrypted[outcomeHandle]);
-        if (outcomeValue === 1) {
-          setLocalPosition("YES");
-        } else if (outcomeValue === 2) {
-          setLocalPosition("NO");
-        }
-      } catch (error) {
-        if (!cancelled) {
-          logWarn("market-detail", "failed to decrypt user position", {
-            marketId: marketId.toString(),
-            account: normalizedAddress,
-            error: error instanceof Error ? error.message : String(error)
+    if (myOutcomeHandle && address && walletClient && !decryptedPosition && !isDecrypting) {
+      const decrypt = async () => {
+        setIsDecrypting(true);
+        try {
+          const result = await decryptUserHandles({
+            contractAddress: shieldBetConfig.address,
+            userAddress: address,
+            walletClient,
+            handles: [myOutcomeHandle as `0x${string}`]
           });
+          const val = result[myOutcomeHandle as `0x${string}`];
+          setDecryptedPosition(Number(val));
+        } catch (e) {
+          logError("market-detail", "decryption failed", e);
+        } finally {
+          setIsDecrypting(false);
         }
-      } finally {
-        if (!cancelled) {
-          setPositionDecrypting(false);
-        }
-      }
-    }
-
-    void loadPosition();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [encryptedOutcomeHandle, hasPosition, marketId, normalizedAddress, walletClient]);
-
-  useEffect(() => {
-    if (!normalizedAddress || !marketData) {
-      setClaimPreview(null);
-      return;
-    }
-
-    const parsed = decodeMarketView(marketData);
-    if (!parsed?.resolved) {
-      setClaimPreview(null);
-      return;
-    }
-
-    const userAddress = normalizedAddress;
-    let cancelled = false;
-
-    async function loadPreview() {
-      try {
-        setClaimPreviewLoading(true);
-        const response = await fetch(
-          `/api/markets/${marketId.toString()}/claim-preview?account=${encodeURIComponent(userAddress)}`,
-          { cache: "no-store" }
-        );
-        const body = (await response.json()) as ClaimPreviewState | { error?: string };
-        if (!response.ok || !("eligible" in body)) {
-          throw new Error(("error" in body && body.error) || "Unable to prepare claim preview");
-        }
-        if (!cancelled) {
-          setClaimPreview(body);
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setClaimPreview(null);
-          logWarn("market-detail", "claim preview unavailable", {
-            marketId: marketId.toString(),
-            account: userAddress,
-            error: error instanceof Error ? error.message : String(error)
-          });
-        }
-      } finally {
-        if (!cancelled) {
-          setClaimPreviewLoading(false);
-        }
-      }
-    }
-
-    void loadPreview();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [marketData, marketId, normalizedAddress, hash]);
-
-  if (!marketParam || !marketData) {
-    return <p className="subtle">Loading market...</p>;
-  }
-
-  const parsedMarket = decodeMarketView(marketData);
-  if (!parsedMarket) {
-    return <p className="text-sm text-rose-500">Unable to decode market payload. Check contract ABI/config.</p>;
-  }
-
-  const parsedDetails = decodeMarketDetails(marketDetailsData);
-  const question = parsedMarket.question;
-  const deadline = parsedMarket.deadline;
-  const outcome = parsedMarket.outcome;
-  const resolved = parsedMarket.resolved;
-  const creator = parsedMarket.creator;
-
-  const diagnostics = getRuntimeDiagnostics();
-  const hasBlockingDiagnostics = diagnostics.some((diagnostic) => diagnostic.severity === "error");
-  const isOwner = Boolean(address && ownerAddress && address.toLowerCase() === ownerAddress.toLowerCase());
-  const marketStatus = getMarketStatus(deadline, resolved);
-  const category = parsedDetails?.category.trim() || inferCategory(question);
-
-  const marketClosed = Date.now() >= Number(deadline) * 1000;
-  const marketResolvedYesNo = resolved && (outcome === 1 || outcome === 2);
-  const marketCancelled = resolved && outcome === 3;
-  const alreadyBet = Boolean(hasPosition);
-  const previewPayout = claimPreview ? BigInt(claimPreview.expectedPayoutWei) : 0n;
-  const claimPayout = claimPreview ? previewPayout : claimQuote?.[0] || 0n;
-  const eligibleToClaim = claimPreview?.eligible || claimQuote?.[1] || false;
-
-  const encryptedVolumeBands = getEncryptedBandCount(marketId, 6, 10);
-  const participantBands = getEncryptedBandCount(marketId + 11n, 3, 8);
-  const poolBalanceWei = typeof marketPoolBalance === "bigint" ? marketPoolBalance : 0n;
-  const totalPoolWei = typeof totalPool === "bigint" ? totalPool : poolBalanceWei;
-  const reservedPayoutWei = typeof reservedPayoutBalance === "bigint" ? reservedPayoutBalance : 0n;
-  const feeBps = typeof feeBasisPoints === "bigint" ? feeBasisPoints : 0n;
-  const stakeWei = typeof stakeAmountWei === "bigint" ? stakeAmountWei : 0n;
-  const gracePeriod = typeof resolutionGracePeriod === "bigint" ? resolutionGracePeriod : 0n;
-  const cancellationUnlockTimestamp = gracePeriod > 0n ? deadline + gracePeriod : null;
-  const canCancelUnresolved =
-    !resolved && marketClosed && cancellationUnlockTimestamp !== null && Date.now() >= Number(cancellationUnlockTimestamp) * 1000;
-
-  const canPlaceBet = !resolved && !marketClosed;
-  const poolBalanceLabel = formatEthLabel(poolBalanceWei);
-  const totalPoolLabel = formatEthLabel(totalPoolWei);
-  const reservedPayoutLabel = formatEthLabel(reservedPayoutWei);
-  const stakeLabel = stakeWei > 0n ? formatEthLabel(stakeWei) : null;
-  const knownPosition = localPosition === "YES" || localPosition === "NO";
-  const userOutcomeMatches =
-    knownPosition && marketResolvedYesNo
-      ? (localPosition === "YES" && outcome === 1) || (localPosition === "NO" && outcome === 2)
-      : null;
-  const marketStatusClass =
-    marketStatus === "Resolved"
-      ? "bg-slate-100 text-slate-700 dark:bg-slate-900 dark:text-slate-300"
-      : marketStatus === "Closed"
-        ? "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300"
-        : marketStatus === "Closing Soon"
-          ? "bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-300"
-          : "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300";
-
-  function getErrorMessage(error: unknown): string {
-    if (error instanceof Error) {
-      const maybe = error as Error & {
-        shortMessage?: string;
-        details?: string;
-        cause?: unknown;
       };
-      if (maybe.shortMessage) return maybe.shortMessage;
-      if (maybe.details) return maybe.details;
-      if (maybe.cause instanceof Error) return maybe.cause.message;
-      return maybe.message;
+      decrypt();
     }
+  }, [myOutcomeHandle, address, walletClient, decryptedPosition, isDecrypting]);
 
-    return String(error);
-  }
-
-  async function flushUi() {
-    await new Promise((resolve) => window.setTimeout(resolve, 0));
-  }
-
-  async function getGasOverrides(
-    functionName:
-      | "placeBet"
-      | "resolveMarket"
-      | "computeAndAssignPayouts"
-      | "openSettlementData"
-      | "claimWinnings"
-      | "claimWinningsWithSig"
-      | "cancelUnresolvedMarket",
-    args: readonly unknown[],
-    value?: bigint
-  ) {
-    if (!publicClient || chainId !== expectedChainId || shieldBetConfig.address === ZERO_ADDRESS) {
-      return {};
-    }
-
+  async function onPlaceBet() {
+    if (!address) return setStatusMessage("Connect wallet first");
+    setIsBetting(true);
+    setStatusMessage("Encrypting position...");
     try {
-      const [estimatedGas, latestBlock] = await Promise.all([
-        publicClient.estimateContractGas({
-          address: shieldBetConfig.address,
-          abi: shieldBetConfig.abi,
-          functionName: functionName as never,
-          args: args as never,
-          account: normalizedAddress || undefined,
-          value
-        }),
-        publicClient.getBlock({ blockTag: "latest" })
-      ]);
-
-      const networkCap = (latestBlock.gasLimit * 90n) / 100n;
-      const paddedEstimate = (estimatedGas * 12n) / 10n;
-      const gas = paddedEstimate > networkCap ? networkCap : paddedEstimate;
-      return gas > 0n ? { gas } : {};
-    } catch (error) {
-      logWarn("market-detail", "gas estimation failed, proceeding without manual cap", {
-        functionName,
-        marketId: marketId.toString(),
-        error: error instanceof Error ? error.message : String(error)
-      });
-      return {};
-    }
-  }
-
-  async function placeBet() {
-    if (!address) {
-      setStatusMessage("Connect your wallet first.");
-      return;
-    }
-    if (!normalizedAddress) {
-      setStatusMessage("Wallet address is not ready yet. Try again.");
-      return;
-    }
-    if (hasBlockingDiagnostics) {
-      setStatusMessage("Resolve the configuration errors shown above before placing a bet.");
-      return;
-    }
-    if (chainId !== expectedChainId) {
-      setStatusMessage(`Wrong network. Switch wallet to chain ID ${expectedChainId}.`);
-      return;
-    }
-
-    try {
-      setStatusMessage(null);
-      setBetFlowStage("preparing");
-      setStatusMessage("Validating your stake amount and building the request...");
-      await flushUi();
-
       const amountWei = parseEther(amount);
-      logInfo("market-detail", "placeBet encrypt request", {
-        marketId: marketId.toString(),
-        account: address,
-        selectedOutcome,
-        amountWei: amountWei.toString()
-      });
-
-      setBetFlowStage("encrypting");
-      setStatusMessage("Encrypting your market side with Zama fhEVM...");
-      await flushUi();
       const encrypted = await encryptBetInputs(selectedOutcome, amountWei, {
         contractAddress: shieldBetConfig.address,
-        userAddress: normalizedAddress
-      });
-      logInfo("market-detail", "placeBet encrypted payload", {
-        marketId: marketId.toString(),
-        encOutcome: encrypted.encOutcome,
-        inputProof: encrypted.inputProof
+        userAddress: address
       });
 
-      setBetFlowStage("wallet");
-      setStatusMessage("Encrypted side is ready. Confirm the ETH stake transaction in your wallet.");
-      await flushUi();
-      const gasOverrides = await getGasOverrides("placeBet", [marketId, encrypted.encOutcome, encrypted.inputProof] as const, amountWei);
+      setStatusMessage("Confirm transaction in wallet...");
       const txHash = await writeContractAsync({
         ...shieldBetConfig,
         functionName: "placeBet",
         args: [marketId, encrypted.encOutcome, encrypted.inputProof],
-        value: amountWei,
-        ...gasOverrides
+        value: amountWei
       });
 
-      setBetFlowStage("confirming");
-      setStatusMessage("Transaction submitted. Waiting for on-chain confirmation...");
-      logInfo("market-detail", "placeBet tx submitted", {
-        marketId: marketId.toString(),
-        account: address,
-        txHash
-      });
-      const receipt = await publicClient?.waitForTransactionReceipt({ hash: txHash });
-      if (!receipt || receipt.status !== "success") {
-        throw new Error("Bet transaction failed or was not confirmed");
-      }
-
-      saveLocalBet({
-        marketId: marketId.toString(),
-        wallet: normalizedAddress,
-        position: selectedOutcome === 1 ? "YES" : "NO",
-        amountWei: amountWei.toString(),
-        createdAt: Date.now()
-      });
-
-      setLocalPosition(selectedOutcome === 1 ? "YES" : "NO");
-      setStatusMessage("Bet placed. Your side is encrypted on-chain, while your ETH stake is public in v1.");
-    } catch (error) {
-      logError("market-detail", "placeBet failed", error);
-      const message = getErrorMessage(error) || "Bet transaction failed";
-      setStatusMessage(message);
+      setStatusMessage("Waiting for confirmation...");
+      await publicClient?.waitForTransactionReceipt({ hash: txHash });
+      setStatusMessage("Bet placed successfully!");
+      refetchMarket();
+    } catch (e) {
+      logError("market-detail", "bet failed", e);
+      setStatusMessage(e instanceof Error ? e.message : "Bet failed");
     } finally {
-      setBetFlowStage("idle");
+      setIsBetting(false);
     }
   }
 
-  async function executeClaim(): Promise<ClaimConfirmation> {
-    if (!address) throw new Error("Connect wallet first");
-    if (chainId !== expectedChainId) throw new Error(`Wrong network. Switch wallet to chain ID ${expectedChainId}.`);
-    const normalizedAccount = normalizedAddress || getAddress(address);
-    const activeClaimPreview = claimPreview;
-
-    let litExecution:
-      | {
-          actionCid: string;
-          response: unknown;
-          logs: string;
-          attestation: {
-            eligible: boolean;
-            account: string;
-            marketId: string;
-            resolvedOutcome: string;
-            expectedPayoutWei: string;
-            txHash?: string;
-          };
-        }
-      | null = null;
-
-    const isSignedWinnerClaim = Boolean(activeClaimPreview && activeClaimPreview.mode === "signed-winner" && activeClaimPreview.eligible);
-    const expectedPayoutWei = activeClaimPreview?.expectedPayoutWei || claimPayout.toString();
-
-    if (litActionCid && marketResolvedYesNo) {
-      if (!walletClient) {
-        throw new Error("Wallet signer not ready for Lit action execution");
-      }
-
-      setStatusMessage("Running Lit eligibility check...");
-      const { LitHandshakeTimeoutError, runLitClaimAction } = await import("@/lib/lit");
-      logInfo("market-detail", "claim lit action start", {
-        marketId: marketId.toString(),
-        account: normalizedAccount,
-        actionCid: litActionCid,
-        resolvedOutcome: outcome.toString(),
-        expectedPayoutWei
-      });
-      try {
-        litExecution = await runLitClaimAction({
-          actionCid: litActionCid,
-          marketId: marketId.toString(),
-          account: normalizedAccount,
-          resolvedOutcome: outcome.toString(),
-          expectedPayoutWei,
-          walletClient
-        });
-        logInfo("market-detail", "claim lit action complete", {
-          marketId: marketId.toString(),
-          actionCid: litExecution.actionCid,
-          litAttestation: litExecution.attestation,
-          litLogs: litExecution.logs
-        });
-      } catch (error) {
-        if (error instanceof LitHandshakeTimeoutError) {
-          logWarn("market-detail", "claim lit action timed out, falling back to on-chain verification", {
-            marketId: marketId.toString(),
-            account: normalizedAccount,
-            actionCid: litActionCid,
-            message: error.message
-          });
-          setStatusMessage("Lit verification is temporarily unavailable. Continuing with on-chain claim verification only.");
-        } else {
-          throw error;
-        }
-      }
-    }
-
-    let txHash: `0x${string}`;
-    let claimChecks: string[] = [];
-    let payoutForVerification = expectedPayoutWei;
-
-    if (isSignedWinnerClaim) {
-      setStatusMessage("Preparing signed winner claim...");
-      const authResponse = await fetch(`/api/markets/${marketId.toString()}/claim-auth`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          account: normalizedAccount
-        })
-      });
-
-      const authBody = (await authResponse.json()) as
-        | ({ error?: string; preview?: ClaimPreviewState } & Partial<ClaimAuthResponse>)
-        | { error?: string };
-
-      if (
-        !authResponse.ok ||
-        !("signature" in authBody) ||
-        typeof authBody.signature !== "string" ||
-        !("expiry" in authBody) ||
-        typeof authBody.expiry !== "string" ||
-        !("totalWinningSideWei" in authBody) ||
-        typeof authBody.totalWinningSideWei !== "string"
-      ) {
-        throw new Error(authBody.error || "Unable to authorize winner claim");
-      }
-
-      const authSignature = authBody.signature;
-      const authExpiry = BigInt(authBody.expiry);
-      const authTotalWinningSideWei = BigInt(authBody.totalWinningSideWei);
-      claimChecks = authBody.checks || [];
-      payoutForVerification = authBody.expectedPayoutWei || expectedPayoutWei;
-      logInfo("market-detail", "claim auth issued", {
-        marketId: marketId.toString(),
-        account: normalizedAccount,
-        signer: authBody.signer,
-        expiry: authExpiry.toString(),
-        totalWinningSideWei: authTotalWinningSideWei.toString()
-      });
-
-      const claimGasOverrides = await getGasOverrides(
-        "claimWinningsWithSig",
-        [marketId, authTotalWinningSideWei, authExpiry, authSignature] as const
-      );
-      txHash = await writeContractAsync({
+  async function onPropose(outcomeIdx: number) {
+    if (!address) return;
+    setStatusMessage("Proposing outcome...");
+    try {
+      const txHash = await writeContractAsync({
         ...shieldBetConfig,
-        functionName: "claimWinningsWithSig",
-        args: [marketId, authTotalWinningSideWei, authExpiry, authSignature],
-        ...claimGasOverrides
+        functionName: "proposeOutcome",
+        args: [marketId, outcomeIdx],
+        value: oracleStake as bigint
       });
-    } else {
-      logInfo("market-detail", "claim submit tx", {
-        marketId: marketId.toString(),
-        account: normalizedAccount
+      await publicClient?.waitForTransactionReceipt({ hash: txHash });
+      setStatusMessage("Outcome proposed!");
+      refetchMarket();
+    } catch (e) {
+      logError("market-detail", "propose failed", e);
+      setStatusMessage(e instanceof Error ? e.message : "Propose failed");
+    }
+  }
+
+  async function onChallenge() {
+    if (!address) return;
+    setStatusMessage("Challenging outcome...");
+    try {
+      const txHash = await writeContractAsync({
+        ...shieldBetConfig,
+        functionName: "challengeOutcome",
+        args: [marketId],
+        value: oracleStake as bigint
       });
-      const claimGasOverrides = await getGasOverrides("claimWinnings", [marketId] as const);
-      txHash = await writeContractAsync({
+      await publicClient?.waitForTransactionReceipt({ hash: txHash });
+      setStatusMessage("Challenge submitted!");
+      refetchMarket();
+    } catch (e) {
+      logError("market-detail", "challenge failed", e);
+      setStatusMessage(e instanceof Error ? e.message : "Challenge failed");
+    }
+  }
+
+  async function onFinalize() {
+    if (!address) return;
+    setStatusMessage("Finalizing outcome...");
+    try {
+      const txHash = await writeContractAsync({
+        ...shieldBetConfig,
+        functionName: "finalizeOutcome",
+        args: [marketId, Number(parsedMarket?.proposedOutcome || 0)]
+      });
+      await publicClient?.waitForTransactionReceipt({ hash: txHash });
+      setStatusMessage("Market finalized!");
+      refetchMarket();
+    } catch (e) {
+      logError("market-detail", "finalize failed", e);
+      setStatusMessage(e instanceof Error ? e.message : "Finalize failed");
+    }
+  }
+
+  async function onClaim() {
+    if (!address) return;
+    setStatusMessage("Claiming winnings...");
+    try {
+      const txHash = await writeContractAsync({
         ...shieldBetConfig,
         functionName: "claimWinnings",
-        args: [marketId],
-        ...claimGasOverrides
+        args: [marketId]
       });
-    }
-    logInfo("market-detail", "claim tx submitted", { txHash });
-
-    const receipt = await publicClient?.waitForTransactionReceipt({ hash: txHash });
-    if (!receipt || receipt.status !== "success") {
-      throw new Error("Claim transaction failed or was not confirmed");
-    }
-
-    const verifyResponse = await fetch("/api/lit/claim", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        marketId: marketId.toString(),
-        account: normalizedAccount,
-        txHash,
-        expectedPayoutWei: payoutForVerification,
-        litActionCid: litExecution?.actionCid || "",
-        resolvedOutcome: outcome.toString(),
-        litResponse: litExecution?.response ?? null,
-        litLogs: litExecution?.logs || ""
-      })
-    });
-
-    const verifyBody = (await verifyResponse.json()) as
-      | ({ error?: string } & ClaimConfirmation)
-      | { error?: string };
-
-    if (!verifyResponse.ok) {
-      throw new Error(verifyBody.error || "Claim verification failed");
-    }
-    if (!("txHash" in verifyBody) || !("plaintextPayoutWei" in verifyBody) || !("mode" in verifyBody)) {
-      throw new Error("Claim verification response was incomplete");
-    }
-
-    const combinedChecks = Array.from(new Set([...(verifyBody.verifiedChecks || []), ...claimChecks]));
-    const result: ClaimConfirmation = {
-      ...verifyBody,
-      verifiedChecks: combinedChecks
-    };
-
-    setStatusMessage(
-      marketCancelled
-        ? "Refund verified and submitted."
-        : verifyBody.mode === "lit"
-          ? "Claim verified with Lit and submitted."
-          : "Claim verified on-chain and submitted."
-    );
-    return result;
-  }
-
-  async function resolveMarket() {
-    try {
-      if (chainId !== expectedChainId) {
-        throw new Error(`Wrong network. Switch wallet to chain ID ${expectedChainId}.`);
-      }
-      if (!marketClosed) {
-        throw new Error(`Market is still open. Resolution unlocks after ${formatDeadline(deadline)}.`);
-      }
-      setAdminMessage("Submitting market resolution...");
-      const gasOverrides = await getGasOverrides("resolveMarket", [marketId, adminResolveOutcome] as const);
-      const resolveHash = await writeContractAsync({
-        ...shieldBetConfig,
-        functionName: "resolveMarket",
-        args: [marketId, adminResolveOutcome],
-        ...gasOverrides
-      });
-
-      const resolveReceipt = await publicClient?.waitForTransactionReceipt({ hash: resolveHash });
-      if (!resolveReceipt || resolveReceipt.status !== "success") {
-        throw new Error("Resolution transaction failed");
-      }
-
-      setAdminMessage("Market resolved on-chain.");
-    } catch (error) {
-      logError("market-detail", "resolve flow failed", error);
-      setAdminMessage(error instanceof Error ? error.message : "Failed to resolve market");
+      await publicClient?.waitForTransactionReceipt({ hash: txHash });
+      setStatusMessage("Winnings claimed!");
+      refetchMarket();
+    } catch (e) {
+      logError("market-detail", "claim failed", e);
+      setStatusMessage(e instanceof Error ? e.message : "Claim failed");
     }
   }
 
-  async function cancelMarket() {
-    try {
-      if (chainId !== expectedChainId) {
-        throw new Error(`Wrong network. Switch wallet to chain ID ${expectedChainId}.`);
-      }
-      setSettlementLoading("cancelling");
-      setAdminMessage("Submitting market cancellation...");
-      const gasOverrides = await getGasOverrides("cancelUnresolvedMarket", [marketId] as const);
-      const cancelHash = await writeContractAsync({
-        ...shieldBetConfig,
-        functionName: "cancelUnresolvedMarket",
-        args: [marketId],
-        ...gasOverrides
-      });
+  if (!parsedMarket) return <div className="p-12 text-center animate-pulse text-slate-500 font-bold">LOADING MARKET DATA...</div>;
 
-      const cancelReceipt = await publicClient?.waitForTransactionReceipt({ hash: cancelHash });
-      if (!cancelReceipt || cancelReceipt.status !== "success") {
-        throw new Error("Cancellation transaction failed");
-      }
-
-      setAdminMessage("Market cancelled. Bettors can now claim refunds.");
-    } catch (error) {
-      logError("market-detail", "cancel market failed", error);
-      setAdminMessage(error instanceof Error ? error.message : "Failed to cancel market");
-    } finally {
-      setSettlementLoading("idle");
-    }
-  }
-
-  async function openSettlementData() {
-    try {
-      if (chainId !== expectedChainId) {
-        throw new Error(`Wrong network. Switch wallet to chain ID ${expectedChainId}.`);
-      }
-      setSettlementLoading("opening");
-      setAdminMessage(null);
-      const logs = await publicClient?.getLogs({
-        address: shieldBetConfig.address,
-        event: betPlacedEvent,
-        args: { marketId },
-        fromBlock: 0n,
-        toBlock: "latest"
-      });
-      const bettors = Array.from(new Set((logs || []).map((log) => getAddress(String(log.args.bettor)))));
-      if (!bettors.length) {
-        throw new Error("No placed bets were found for this market.");
-      }
-
-      const gasOverrides = await getGasOverrides("openSettlementData", [marketId, bettors] as const);
-      const openHash = await writeContractAsync({
-        ...shieldBetConfig,
-        functionName: "openSettlementData",
-        args: [marketId, bettors],
-        ...gasOverrides
-      });
-      await publicClient?.waitForTransactionReceipt({ hash: openHash });
-      setAdminMessage("Settlement data opened for post-resolution decryption.");
-    } catch (error) {
-      logError("market-detail", "open settlement data failed", error);
-      setAdminMessage(error instanceof Error ? error.message : "Failed to open settlement data");
-    } finally {
-      setSettlementLoading("idle");
-    }
-  }
-
-  async function loadSettlementPlan() {
-    try {
-      setSettlementLoading("loading-plan");
-      setAdminMessage(null);
-      const response = await fetch(`/api/markets/${marketId.toString()}/settlement`, { cache: "no-store" });
-      const body = (await response.json()) as SettlementPlanView & { error?: string };
-      if (!response.ok) {
-        throw new Error(body.error || "Unable to generate settlement plan");
-      }
-      setSettlementPlan(body);
-      setAdminMessage("Settlement plan generated from decrypted resolved bets.");
-    } catch (error) {
-      logError("market-detail", "load settlement plan failed", error);
-      setSettlementPlan(null);
-      setAdminMessage(error instanceof Error ? error.message : "Failed to load settlement plan");
-    } finally {
-      setSettlementLoading("idle");
-    }
-  }
-
-  async function assignPayoutsFromPlan() {
-    if (!settlementPlan) {
-      setAdminMessage("Generate a settlement plan first.");
-      return;
-    }
-
-    try {
-      if (chainId !== expectedChainId) {
-        throw new Error(`Wrong network. Switch wallet to chain ID ${expectedChainId}.`);
-      }
-      setSettlementLoading("assigning");
-      setAdminMessage(null);
-      const winners = settlementPlan.participants.filter((participant) => participant.isWinner && !participant.hasClaimed);
-      if (!winners.length) {
-        throw new Error("No unclaimed winners are available in the current settlement plan.");
-      }
-
-      const winnerAddresses = winners.map((participant) => getAddress(participant.bettor));
-      const winnerAmounts = winners.map((participant) => BigInt(participant.amountWei));
-      const totalWinningSideWei = BigInt(settlementPlan.totalWinningSideWei);
-      const gasOverrides = await getGasOverrides(
-        "computeAndAssignPayouts",
-        [marketId, winnerAddresses, winnerAmounts, totalWinningSideWei] as const
-      );
-
-      const payoutHash = await writeContractAsync({
-        ...shieldBetConfig,
-        functionName: "computeAndAssignPayouts",
-        args: [marketId, winnerAddresses, winnerAmounts, totalWinningSideWei],
-        ...gasOverrides
-      });
-      await publicClient?.waitForTransactionReceipt({ hash: payoutHash });
-      setAdminMessage("Winner payouts assigned from the settlement plan.");
-      await loadSettlementPlan();
-    } catch (error) {
-      logError("market-detail", "assign payout batch failed", error);
-      setAdminMessage(error instanceof Error ? error.message : "Failed to assign payouts");
-    } finally {
-      setSettlementLoading("idle");
-    }
-  }
-
-  const claimActionLabel = marketCancelled ? "Claim refund" : "Claim winnings";
-  const claimDialogLabel = marketCancelled ? "refund" : "winnings";
+  const isExpired = status === "Expired";
+  const isProposed = status === "Proposed";
+  const isDisputed = status === "Disputed";
+  const isFinalized = status === "Finalized";
+  const isActive = status === "Active";
 
   return (
-    <section className="space-y-5">
-      <RuntimeAlerts diagnostics={diagnostics} />
-
-      <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
-        <Link href="/markets" className="underline underline-offset-2">
-          Markets
-        </Link>
-        <span>&gt;</span>
-        <span>{category}</span>
-        <span>&gt;</span>
-        <span className="line-clamp-1 max-w-md">{question}</span>
+    <section className="mx-auto max-w-6xl space-y-6">
+      <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+        <Link href="/markets" className="hover:text-indigo-500 transition-colors">Markets Dashboard</Link>
+        <ChevronRight className="h-3 w-3" />
+        <span>{parsedDetails?.category || "General"}</span>
+        <ChevronRight className="h-3 w-3" />
+        <span className="text-slate-600 dark:text-slate-300">Market #{marketId.toString()}</span>
       </div>
 
-      <div className="grid gap-5 lg:grid-cols-5">
-        <div className="space-y-5 lg:col-span-3">
-          <div className="surface p-5 md:p-6">
-            <h1 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100 md:text-3xl">{question}</h1>
-
-            <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
-              <span className={`rounded-full px-2.5 py-1 font-semibold ${marketStatusClass}`}>{marketStatus}</span>
-              <span className="rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-slate-700 dark:bg-slate-900 dark:text-slate-300">
-                <Clock3 className="mr-1 inline h-3 w-3" /> {formatDeadline(deadline)}
-              </span>
+      <div className="grid gap-6 lg:grid-cols-3">
+        {/* Main Content */}
+        <div className="lg:col-span-2 space-y-6">
+          <div className="surface p-8 space-y-6 overflow-hidden relative">
+            {/* Status Badge */}
+            <div className="flex items-center justify-between">
+              <div className="flex gap-2">
+                <span className="rounded-full bg-indigo-100 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300">{marketType}</span>
+                <span className={`rounded-full px-3 py-1 text-[10px] font-bold uppercase tracking-wider ${isActive ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400" :
+                    isExpired ? "bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400" :
+                      isFinalized ? "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-400" :
+                        "bg-rose-100 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400"
+                  }`}>
+                  {status}
+                </span>
+              </div>
+              <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 flex items-center gap-1.5">
+                <Clock3 className="h-3 w-3" />
+                {isActive ? getCountdown(parsedMarket.deadline) : "Closed " + formatDeadline(parsedMarket.deadline)}
+              </div>
             </div>
 
-            <div className="mt-4 grid gap-2 text-sm text-slate-600 dark:text-slate-300">
-              {marketResolvedYesNo ? (
-                <>
-                  <p>
-                    <span className="font-medium">Market closed:</span> {formatDeadline(deadline)}
-                  </p>
-                  <p>
-                    <span className="font-medium">Resolved outcome:</span> {getOutcomeLabel(outcome)}
-                  </p>
-                </>
-              ) : marketCancelled ? (
-                <>
-                  <p>
-                    <span className="font-medium">Market closed:</span> {formatDeadline(deadline)}
-                  </p>
-                  <p>
-                    <span className="font-medium">Final state:</span> Cancelled, refunds enabled
-                  </p>
-                </>
-              ) : marketClosed ? (
-                <p>
-                  <span className="font-medium">Market closed:</span> {formatDeadline(deadline)}
-                </p>
-              ) : (
-                <p>
-                  <span className="font-medium">Closes:</span> {formatDeadline(deadline)} ({getCountdown(deadline)})
-                </p>
-              )}
-              <p>
-                <span className="font-medium">Pool balance:</span> {poolBalanceLabel}
+            <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white md:text-4xl leading-tight">
+              {parsedMarket.question}
+            </h1>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-4 border-t border-slate-100 dark:border-slate-800">
+              <div className="space-y-1">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Pool Size</p>
+                <p className="text-lg font-bold text-slate-900 dark:text-white">{Number(formatEther(marketPoolBalance || 0n)).toFixed(4)} ETH</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Participants</p>
+                <p className="text-lg font-bold text-slate-900 dark:text-white">Encrypted</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Created</p>
+                <p className="text-lg font-bold text-slate-900 dark:text-white">#{marketId.toString()}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Creator</p>
+                <p className="text-lg font-bold text-slate-900 dark:text-white font-mono truncate max-w-[100px]">{parsedMarket.creator.slice(0, 6)}...</p>
+              </div>
+            </div>
+
+            <div className="bg-slate-50 dark:bg-slate-900/50 rounded-2xl p-6 space-y-3">
+              <div className="flex items-center gap-2 font-bold text-slate-900 dark:text-white">
+                <Info className="h-4 w-4 text-indigo-500" />
+                Resolution Criteria
+              </div>
+              <p className="text-sm leading-relaxed text-slate-600 dark:text-slate-400">
+                {parsedDetails?.resolutionCriteria || "The market resolves based on the criteria specified at creation time."}
               </p>
-              <p>
-                <span className="font-medium">Created by:</span> <span className="font-mono-ui">{creator}</span>
-              </p>
-              <details className="surface-muted mt-2 p-3">
-                <summary className="cursor-pointer text-sm font-semibold text-slate-900 dark:text-slate-100">Resolution criteria</summary>
-                <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
-                  {parsedDetails?.resolutionCriteria.trim() || "No explicit resolution criteria has been stored for this market yet."}
-                </p>
-                <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
-                  Resolution source: {parsedDetails?.resolutionSource.trim() || "contract owner transaction"}
-                </p>
-              </details>
+              <div className="flex items-center gap-4 pt-2">
+                <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase text-slate-500">
+                  <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" />
+                  Optimistic Oracle
+                </div>
+                <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase text-slate-500">
+                  <FileText className="h-3.5 w-3.5 text-indigo-500" />
+                  Source: {parsedDetails?.resolutionSource || "Web"}
+                </div>
+              </div>
             </div>
           </div>
 
-          {canPlaceBet ? (
-            <BetPlacement
-              selectedOutcome={selectedOutcome}
-              amount={amount}
-              balanceLabel={balance ? `${Number(balance.formatted).toFixed(4)} ${balance.symbol}` : "Wallet not connected"}
-              alreadyBet={alreadyBet}
-              isSubmitting={betFlowStage !== "idle"}
-              submitLabel={
-                alreadyBet
-                  ? "BET ALREADY PLACED"
-                  : betFlowStage === "preparing"
-                    ? "PREPARING BET..."
-                    : betFlowStage === "encrypting"
-                      ? "ENCRYPTING SIDE..."
-                      : betFlowStage === "wallet"
-                        ? "CHECK WALLET TO SIGN"
-                        : betFlowStage === "confirming"
-                          ? "CONFIRMING ON-CHAIN..."
-                          : "CONFIRM BET"
-              }
-              statusHint={
-                alreadyBet
-                  ? "This wallet already has a position in this market."
-                  : betFlowStage === "preparing"
-                    ? "Validating your ETH stake and building the encrypted request."
-                    : betFlowStage === "encrypting"
-                      ? "ShieldBet v1 encrypts your side with Zama fhEVM before the wallet prompt appears."
-                      : betFlowStage === "wallet"
-                        ? "Your side is encrypted. Approve the ETH stake transaction in your wallet."
-                        : betFlowStage === "confirming"
-                          ? "Your bet is submitted. Waiting for the chain to confirm it."
-                          : "ShieldBet v1 keeps your side encrypted on-chain. Your ETH stake remains public."
-              }
-              onSelectOutcome={setSelectedOutcome}
-              onAmountChange={setAmount}
-              onMax={() => {
-                if (!balance) return;
-                setAmount((Number(balance.formatted) * 0.98).toFixed(4));
-              }}
-              onSubmit={placeBet}
-            />
-          ) : !resolved ? (
-            <div className="surface p-5">
-              <h2 className="section-title">Market closed</h2>
-              <p className="subtle mt-2">
-                Betting ended at {formatDeadline(deadline)}. This market is now waiting for a final outcome or cancellation.
-              </p>
-              {cancellationUnlockTimestamp ? (
-                <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-                  If the owner never resolves it, anyone can cancel the market after {formatDeadline(cancellationUnlockTimestamp)} to unlock refunds.
-                </p>
-              ) : null}
-              {canCancelUnresolved ? (
-                <button
-                  type="button"
-                  onClick={cancelMarket}
-                  disabled={settlementLoading !== "idle"}
-                  className="mt-4 rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {settlementLoading === "cancelling" ? "Cancelling market..." : "Cancel market and unlock refunds"}
-                </button>
-              ) : null}
-            </div>
-          ) : (
-            <div className="surface p-5">
-              <h2 className="section-title">
-                {marketCancelled ? "Market cancelled" : `Market resolved: ${getOutcomeLabel(outcome)}`}
-              </h2>
-              <p className="subtle mt-2">
-                {marketCancelled
-                  ? eligibleToClaim
-                    ? "This market was cancelled after the resolution grace period. You can now claim your ETH refund."
-                    : alreadyBet
-                      ? "This market was cancelled. Refunds are available to bettors who have not already claimed."
-                      : "This market was cancelled. Only wallets with a stake in the market can claim a refund."
-                  : eligibleToClaim
-                    ? claimPreview?.mode === "signed-winner"
-                      ? "Your wallet is confirmed on the winning side. Open the claim flow to get a signed authorization and withdraw your payout."
-                      : "You have a claim quote available. Open the claim flow to verify and withdraw your payout."
-                    : userOutcomeMatches === false
-                      ? "Your recorded side did not match the resolved outcome for this market."
-                    : userOutcomeMatches === true
-                        ? claimPreviewLoading
-                          ? "Checking your winner eligibility and payout quote..."
-                          : claimPreview?.reason || "Your recorded side matched the resolved outcome. Claim becomes available once settlement data is opened."
-                        : alreadyBet
-                          ? claimPreviewLoading
-                            ? "Checking your claim status..."
-                            : claimPreview?.reason || "Your wallet has a position here. Claim becomes available after settlement data is opened."
-                          : "This market has been resolved. Claims are only available to wallets with assigned winnings."}
-              </p>
-              <button
-                type="button"
-                disabled={!eligibleToClaim || isPending || isConfirming}
-                onClick={() => setClaimOpen(true)}
-                className="mt-4 rounded-lg bg-indigo-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:scale-[1.02] hover:bg-indigo-600 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {eligibleToClaim ? claimActionLabel : marketCancelled ? "Refund unavailable" : "Claim unavailable"}
-              </button>
-            </div>
-          )}
+          {/* Oracle Dashboard */}
+          {(isExpired || isProposed || isDisputed || isFinalized) && (
+            <div className="bg-indigo-900 rounded-3xl p-8 text-white space-y-6 shadow-2xl shadow-indigo-900/20">
+              <div className="flex items-center justify-between">
+                <div className="space-y-1">
+                  <h2 className="text-2xl font-bold">Optimistic Resolver</h2>
+                  <p className="text-indigo-300 text-sm font-medium">Decentralized resolution monitoring</p>
+                </div>
+                <Gavel className="h-10 w-10 text-indigo-400/30" />
+              </div>
 
-          {statusMessage && <p className="text-sm text-slate-600 dark:text-slate-300">{statusMessage}</p>}
-
-          {(isOwner || marketResolvedYesNo) && (
-            <div className="surface space-y-3 p-5">
-              <h2 className="section-title">Settlement Controls</h2>
-              {!resolved ? (
-                isOwner ? (
-                  <>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setAdminResolveOutcome(1)}
-                        className={`rounded-lg px-3 py-2 text-sm font-semibold ${
-                          adminResolveOutcome === 1 ? "bg-emerald-500 text-white" : "bg-slate-100 dark:bg-slate-900"
-                        }`}
-                      >
-                        Resolve YES
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setAdminResolveOutcome(2)}
-                        className={`rounded-lg px-3 py-2 text-sm font-semibold ${
-                          adminResolveOutcome === 2 ? "bg-rose-500 text-white" : "bg-slate-100 dark:bg-slate-900"
-                        }`}
-                      >
-                        Resolve NO
+              <div className="grid md:grid-cols-2 gap-6">
+                <div className="bg-white/5 rounded-2xl p-5 border border-white/10 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-indigo-300">Current Phase</span>
+                    <span className="px-2 py-0.5 rounded-md bg-indigo-500 text-[10px] font-bold uppercase">{status}</span>
+                  </div>
+                  {isExpired && (
+                    <div className="space-y-3">
+                      <p className="text-sm text-indigo-100">Market has expired. Anyone can propose the final outcome by staking {oracleStake ? formatEther(oracleStake) : "0.01"} ETH.</p>
+                      <div className="grid gap-2">
+                        {labels.map((l, i) => (
+                          <button key={i} onClick={() => onPropose(i)} className="w-full py-2 rounded-xl bg-white text-indigo-900 text-xs font-bold hover:bg-indigo-50 transition-colors">
+                            PROPOSE "{l}"
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {isProposed && (
+                    <div className="space-y-3">
+                      <p className="text-sm text-indigo-100">
+                        Proposed Outcome: <span className="font-bold">"{labels[parsedMarket.proposedOutcome]}"</span>
+                      </p>
+                      <div className="p-3 bg-white/10 rounded-xl space-y-1">
+                        <p className="text-[10px] font-bold uppercase text-indigo-300 flex items-center gap-1.5">
+                          <History className="h-3 w-3" /> Dispute window ends in
+                        </p>
+                        <p className="text-lg font-bold">{getCountdown(parsedMarket.disputeWindowEnd)}</p>
+                      </div>
+                      <div className="flex gap-2">
+                        <button onClick={onChallenge} className="flex-1 py-3 rounded-xl bg-rose-500 text-white text-xs font-bold hover:bg-rose-600 transition-colors flex items-center justify-center gap-2">
+                          <AlertCircle className="h-4 w-4" /> CHALLENGE
+                        </button>
+                        <button
+                          onClick={onFinalize}
+                          disabled={Number(parsedMarket.disputeWindowEnd) * 1000 > Date.now()}
+                          className="flex-1 py-3 rounded-xl bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold hover:bg-emerald-600 transition-colors flex items-center justify-center gap-2"
+                        >
+                          <CheckCircle className="h-4 w-4" /> FINALIZE
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {isDisputed && (
+                    <div className="space-y-3">
+                      <p className="text-sm text-indigo-100">
+                        The proposed outcome was challenged. The market has been escalated for dispute resolution.
+                      </p>
+                      <div className="flex items-center gap-2 text-rose-300 font-bold text-xs uppercase italic">
+                        <AlertCircle className="h-4 w-4 animate-ping" /> Escalated to DAO
+                      </div>
+                      <button onClick={onFinalize} className="w-full py-3 rounded-xl bg-indigo-500 text-white text-xs font-bold hover:bg-indigo-600 transition-colors">
+                        PROCESS DISPUTE RESULT
                       </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={resolveMarket}
-                      disabled={!marketClosed}
-                      className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      Resolve market
-                    </button>
-                  </>
-                ) : (
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Resolution is owner-controlled in v1. If the owner does not resolve after the grace period, anyone can cancel the market to unlock refunds.
-                  </p>
-                )
-              ) : marketResolvedYesNo ? (
-                <>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Settlement is a two-step flow in v1: anyone can open resolved-side data, then winners claim against a signer-authorized payout computed from their public stake and the winning-side total.
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={openSettlementData}
-                      disabled={settlementLoading !== "idle"}
-                      className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {settlementLoading === "opening" ? "Opening settlement data..." : "Open settlement data"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={loadSettlementPlan}
-                      disabled={settlementLoading !== "idle"}
-                      className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:text-slate-200"
-                    >
-                      {settlementLoading === "loading-plan" ? "Generating plan..." : "Generate payout plan"}
-                    </button>
+                  )}
+                  {isFinalized && (
+                    <div className="space-y-3">
+                      <div className="p-4 bg-emerald-500/20 rounded-2xl border border-emerald-500/30 text-center">
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-300">Official Result</p>
+                        <p className="mt-2 text-2xl font-bold text-white">"{labels[parsedMarket.outcome]}"</p>
+                      </div>
+                      {hasPosition && (
+                        <button onClick={onClaim} className="w-full py-4 rounded-2xl bg-emerald-500 text-white font-bold hover:bg-emerald-400 transition-all shadow-lg shadow-emerald-500/20 active:scale-95">
+                          CLAIM WINNINGS
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-white/5 rounded-2xl p-5 border border-white/10 space-y-3 flex flex-col justify-between">
+                  <div>
+                    <h3 className="text-xs font-bold uppercase tracking-widest text-indigo-300 mb-2">Stake Info</h3>
+                    <div className="space-y-2">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-indigo-200">Proposer Stake</span>
+                        <span className="font-bold">{oracleStake ? formatEther(oracleStake) : "0.01"} ETH</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-indigo-200">Success Reward</span>
+                        <span className="font-bold">190% of Stake</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-indigo-200">Platform Fee</span>
+                        <span className="font-bold">10%</span>
+                      </div>
+                    </div>
                   </div>
-                  {settlementPlan ? <SettlementPlanPanel plan={settlementPlan} /> : null}
-                </>
-              ) : (
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  This market finished in a cancelled state. Settlement data is not needed; bettors claim refunds directly.
-                </p>
-              )}
-              {adminMessage && <p className="text-sm text-slate-600 dark:text-slate-300">{adminMessage}</p>}
+                  <div className="text-[10px] text-indigo-300/60 leading-relaxed italic">
+                    Our optimistic oracle ensures honest resolution. False claims are slashed, rewarding challengers with 90% of the slashed stake.
+                  </div>
+                </div>
+              </div>
             </div>
           )}
+
+          <EncryptedActivity marketId={marketId} />
         </div>
 
-        <aside className="space-y-5 lg:col-span-2">
-          <div className="surface p-4">
-            <h3 className="section-title text-base">Market Stats (v1)</h3>
-            <div className="mt-3 space-y-3 text-sm">
-              <div className="surface-muted flex items-center justify-between px-3 py-2">
-                <span>Total deposited</span>
-                <span className="font-mono-ui">{totalPoolLabel}</span>
+        {/* Sidebar */}
+        <aside className="space-y-6">
+          {isActive ? (
+            <BetPlacement
+              selectedOutcome={selectedOutcome}
+              outcomeLabels={labels}
+              amount={amount}
+              balanceLabel={balance ? `${Number(balance.formatted).toFixed(4)} ${balance.symbol}` : "Not Connected"}
+              alreadyBet={!!hasPosition}
+              isSubmitting={isBetting}
+              submitLabel={isBetting ? "PROCESSING..." : "CONFIRM POSITION"}
+              statusHint="Your position is fully encrypted on-chain. Only the stake size is visible."
+              onSelectOutcome={setSelectedOutcome}
+              onAmountChange={setAmount}
+              onMax={() => setAmount(balance ? (Number(balance.formatted) * 0.99).toFixed(5) : "0")}
+              onSubmit={onPlaceBet}
+            />
+          ) : (
+            <div className="surface p-6 space-y-3">
+              <div className="h-12 w-12 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
+                <TrendingUp className="h-6 w-6 text-slate-400" />
               </div>
-              <div className="surface-muted flex items-center justify-between px-3 py-2">
-                <span>Pool balance</span>
-                <span className="font-mono-ui">{poolBalanceLabel}</span>
-              </div>
-              <div className="surface-muted flex items-center justify-between px-3 py-2">
-                <span>Reserved payouts</span>
-                <span className="font-mono-ui">{reservedPayoutLabel}</span>
-              </div>
-              <div className="surface-muted flex items-center justify-between px-3 py-2">
-                <span>Fee rate</span>
-                <span className="font-mono-ui">{Number(feeBps) / 100}%</span>
-              </div>
-              <div className="surface-muted flex items-center justify-between px-3 py-2">
-                <span>Outcome privacy band</span>
-                <span className="flex items-center gap-2 font-mono-ui">
-                  <EncryptedBands count={encryptedVolumeBands} />
-                </span>
-              </div>
-              <div className="surface-muted flex items-center justify-between px-3 py-2">
-                <span>Participation visibility</span>
-                <span className="flex items-center gap-2 font-mono-ui">
-                  <EncryptedBands count={participantBands} />
-                </span>
-              </div>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                ShieldBet v1 keeps each wallet&apos;s side encrypted. ETH stakes and total pool size are public on-chain.
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white">Betting Closed</h3>
+              <p className="text-sm text-slate-500 dark:text-slate-400 leading-relaxed">
+                This market has reached its deadline and is no longer accepting new positions. Check the Oracle Resolver for the latest status.
               </p>
             </div>
-          </div>
+          )}
 
-          <div className="surface p-4">
-            <h3 className="section-title text-base">
-              {address && alreadyBet && knownPosition ? `Your ${localPosition} Position` : "Your Position"}
-            </h3>
-            {address && alreadyBet ? (
-              <div className="mt-3 space-y-2 text-sm">
-                <p className="text-slate-700 dark:text-slate-300">
-                  {knownPosition
-                    ? `This wallet is locked into ${localPosition}.`
-                    : "This wallet has an encrypted side on-chain. The side is not available in this browser session yet."}
-                </p>
-                {positionDecrypting ? <p className="text-xs text-slate-500 dark:text-slate-400">Decrypting your side from Zama fhEVM...</p> : null}
-                {knownPosition ? (
-                  <p>
-                    Outcome: <span className="font-semibold">{localPosition}</span>
-                  </p>
-                ) : null}
-                {claimPreviewLoading && resolved ? (
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Checking payout eligibility...</p>
-                ) : null}
-                {!claimPreviewLoading && claimPreview?.reason ? (
-                  <p className="text-xs text-slate-500 dark:text-slate-400">{claimPreview.reason}</p>
-                ) : null}
-                {stakeLabel ? (
-                  <p>
-                    Stake: <span className="font-semibold">{stakeLabel}</span>
-                  </p>
-                ) : null}
-                {marketResolvedYesNo && userOutcomeMatches !== null ? (
-                  <p>
-                    Result:{" "}
-                    <span className={`font-semibold ${userOutcomeMatches ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
-                      {userOutcomeMatches ? "Won" : "Lost"}
-                    </span>
-                  </p>
-                ) : null}
-                {marketCancelled ? (
-                  <p>
-                    Result: <span className="font-semibold text-amber-600 dark:text-amber-400">Refund eligible</span>
-                  </p>
-                ) : null}
-                <button
-                  type="button"
-                  disabled={!resolved || !eligibleToClaim}
-                  onClick={() => setClaimOpen(true)}
-                  className="rounded-lg bg-emerald-500 px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {resolved
-                    ? eligibleToClaim
-                      ? claimActionLabel
-                      : marketCancelled
-                        ? "Refund unavailable"
-                        : userOutcomeMatches === false
-                          ? "Position lost"
-                          : claimPreviewLoading
-                            ? "Checking claim status..."
-                            : claimPreview?.reason?.includes("Settlement data")
-                              ? "Awaiting settlement opening"
-                              : "Claim unavailable"
-                    : "Claim available after resolution"}
-                </button>
-              </div>
-            ) : address ? (
-              <p className="subtle mt-3">You have not placed a bet in this market yet.</p>
+          <div className="surface p-6 space-y-3">
+            <h3 className="text-sm font-bold uppercase tracking-widest text-slate-400">Your Position</h3>
+            {address ? (
+              hasPosition ? (
+                <div className="space-y-3">
+                  <div className="p-4 rounded-2xl bg-indigo-50 dark:bg-indigo-500/5 border border-indigo-100 dark:border-indigo-500/10">
+                    <p className="text-[10px] font-bold uppercase text-indigo-600 dark:text-indigo-300">Outcome</p>
+                    <p className="mt-1 text-lg font-bold text-indigo-900 dark:text-white">
+                      {isDecrypting ? "Decrypting..." : decryptedPosition !== null ? labels[decryptedPosition] : "Encrypted"}
+                    </p>
+                  </div>
+                  {isFinalized && decryptedPosition !== null && (
+                    <div className="p-4 rounded-2xl bg-white border border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-500 uppercase">Result</span>
+                      <span className={`text-xs font-bold px-2 py-1 rounded-md ${decryptedPosition === parsedMarket.outcome ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>
+                        {decryptedPosition === parsedMarket.outcome ? "WON" : "LOST"}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-sm text-slate-500">No position found for this wallet.</p>
+              )
             ) : (
-              <p className="subtle mt-3">Connect your wallet and place a bet to track your position.</p>
+              <p className="text-sm text-slate-500">Connect wallet to view your encrypted positions.</p>
             )}
           </div>
 
-          <EncryptedActivity marketId={marketId} />
-
-          <div className="surface p-4">
-            <h3 className="section-title text-base">Audit Trail</h3>
-            <div className="mt-3 space-y-2 text-sm">
-              {metadataCid ? (
-                <a
-                  href={cidToExplorer(String(metadataCid))}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 text-indigo-600 underline underline-offset-2 dark:text-indigo-300"
-                >
-                  <FileText className="h-4 w-4" /> Market metadata CID <ExternalLink className="h-3.5 w-3.5" />
-                </a>
-              ) : (
-                <p className="subtle">Market CID pending</p>
-              )}
-              {resolutionCid ? (
-                <a
-                  href={cidToExplorer(String(resolutionCid))}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 text-indigo-600 underline underline-offset-2 dark:text-indigo-300"
-                >
-                  <Wallet className="h-4 w-4" /> Resolution CID <ExternalLink className="h-3.5 w-3.5" />
-                </a>
-              ) : (
-                <p className="subtle">Resolution CID pending</p>
-              )}
+          <div className="surface p-6 space-y-3">
+            <h3 className="text-sm font-bold uppercase tracking-widest text-slate-400">Audit & Links</h3>
+            <div className="space-y-3">
+              <a href={cidToExplorer(metadataCid as string)} target="_blank" rel="noreferrer" className="flex items-center justify-between group">
+                <div className="flex items-center gap-2 text-xs font-bold text-slate-600 dark:text-slate-300 group-hover:text-indigo-500 transition-colors">
+                  <FileText className="h-4 w-4" /> Market Metadata
+                </div>
+                <ArrowRight className="h-3 w-3 text-slate-300 group-hover:translate-x-1 transition-all" />
+              </a>
+              <div className="flex items-center justify-between text-xs font-bold text-slate-400">
+                <div className="flex items-center gap-2">
+                  <Wallet className="h-4 w-4" /> Contract Address
+                </div>
+                <span className="font-mono">{shieldBetConfig.address.slice(0, 6)}...</span>
+              </div>
             </div>
           </div>
         </aside>
       </div>
 
-      <ClaimFlow
-        open={claimOpen}
-        onClose={() => setClaimOpen(false)}
-        payoutWei={claimPayout}
-        onConfirmClaim={executeClaim}
-        claimType={claimDialogLabel}
-      />
     </section>
+  );
+}
+
+function CheckCircle(props: any) {
+  return (
+    <svg
+      {...props}
+      xmlns="http://www.w3.org/2000/svg"
+      width="24" height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" />
+    </svg>
   );
 }

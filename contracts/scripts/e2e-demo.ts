@@ -16,7 +16,6 @@ async function main() {
   const [owner] = await ethers.getSigners();
   const provider = ethers.provider;
   const shieldBet = ShieldBet__factory.connect(contractAddress, owner);
-  const network = await provider.getNetwork();
 
   await hre.fhevm.initializeCLIApi();
 
@@ -25,24 +24,21 @@ async function main() {
     throw new Error("Unable to load latest block");
   }
 
-  const deadline = BigInt(latestBlock.timestamp + 60);
-  console.log("Creating market on live chain...");
+  // Set deadline 30s ahead
+  const deadline = BigInt(latestBlock.timestamp + 30);
+  console.log("Creating categorical market (Binary type)...");
+  
   const createTx = await shieldBet.createMarketWithMetadata(
-    "Live demo: Will ShieldBet settle correctly on Sepolia today?",
+    "Optimistic Oracle: Will fhEVM settle this correctly?",
     deadline,
-    "Crypto",
-    "Resolves YES if the live Sepolia e2e script completes with a successful claim.",
-    "Owner settlement"
+    0, // MarketType.Binary
+    ["YES", "NO"],
+    "Demo",
+    "Resolves YES if the e2e flow completes.",
+    "Owner proposal"
   );
   const createReceipt = await createTx.wait();
-  if (!createReceipt) {
-    throw new Error("Missing create receipt");
-  }
-
-  const marketCreatedEvent = shieldBet.interface.getEvent("MarketCreated");
-  if (!marketCreatedEvent) {
-    throw new Error("Missing MarketCreated event");
-  }
+  if (!createReceipt) throw new Error("Missing create receipt");
 
   let marketId: bigint | null = null;
   for (const log of createReceipt.logs) {
@@ -57,9 +53,7 @@ async function main() {
     }
   }
 
-  if (!marketId) {
-    throw new Error("Unable to determine marketId from create receipt");
-  }
+  if (!marketId) throw new Error("Unable to determine marketId");
   console.log(`Market created: ${marketId.toString()}`);
 
   async function encryptBetSide(bettorAddress: string, outcome: number) {
@@ -68,96 +62,44 @@ async function main() {
     return input.encrypt();
   }
 
-  const ownerStake = parseEther("0.0001");
-
-  console.log("Placing encrypted YES bet from owner...");
-  const ownerEncrypted = await encryptBetSide(owner.address, 1);
-  await (
-    await shieldBet.placeBet(marketId, ownerEncrypted.handles[0], ownerEncrypted.inputProof, {
-      value: ownerStake,
-      gasLimit: 5_000_000n
-    })
-  ).wait();
-
+  const stake = parseEther("0.001");
+  console.log("Placing encrypted YES bet...");
+  const enc = await encryptBetSide(owner.address, 0); // YES is index 0
+  await (await shieldBet.placeBet(marketId, enc.handles[0], enc.inputProof, { value: stake })).wait();
+  
   console.log("Waiting for market close...");
   while (true) {
-    const currentBlock = await provider.getBlock("latest");
-    if (currentBlock && BigInt(currentBlock.timestamp) > deadline) break;
-    await new Promise((resolve) => setTimeout(resolve, 4_000));
+    const current = await provider.getBlock("latest");
+    if (current && BigInt(current.timestamp) > deadline) break;
+    await new Promise((r) => setTimeout(r, 2000));
   }
 
-  const resolutionExpiry = BigInt(Math.floor(Date.now() / 1000) + 900);
-  const resolutionSignature = await owner.signTypedData(
-    {
-      name: "ShieldBet",
-      version: "1",
-      chainId: Number(network.chainId),
-      verifyingContract: contractAddress
-    },
-    {
-      ResolutionAuth: [
-        { name: "marketId", type: "uint256" },
-        { name: "outcome", type: "uint8" },
-        { name: "expiry", type: "uint256" }
-      ]
-    },
-    {
-      marketId,
-      outcome: 1,
-      expiry: resolutionExpiry
-    }
-  );
+  console.log("Proposing outcome index 0 (YES)...");
+  const oracleStake = await shieldBet.ORACLE_STAKE();
+  await (await shieldBet.proposeOutcome(marketId, 0, { value: oracleStake })).wait();
 
-  console.log("Resolving market YES with signer authorization and opening settlement data...");
-  await (await shieldBet.resolveMarketWithSig(marketId, 1, resolutionExpiry, resolutionSignature)).wait();
-  await (await shieldBet.openSettlementData(marketId, [owner.address])).wait();
+  const market = await shieldBet.markets(marketId);
+  const disputeEnd = market.disputeWindowEnd;
+  console.log(`Waiting for dispute window at ${new Date(Number(disputeEnd) * 1000).toLocaleString()}`);
 
-  const claimExpiry = BigInt(Math.floor(Date.now() / 1000) + 900);
-  const claimSignature = await owner.signTypedData(
-    {
-      name: "ShieldBet",
-      version: "1",
-      chainId: Number(network.chainId),
-      verifyingContract: contractAddress
-    },
-    {
-      ClaimAuth: [
-        { name: "marketId", type: "uint256" },
-        { name: "claimant", type: "address" },
-        { name: "resolvedOutcome", type: "uint8" },
-        { name: "totalWinningSide", type: "uint256" },
-        { name: "expiry", type: "uint256" }
-      ]
-    },
-    {
-      marketId,
-      claimant: owner.address,
-      resolvedOutcome: 1,
-      totalWinningSide: ownerStake,
-      expiry: claimExpiry
-    }
-  );
+  while (true) {
+    const current = await provider.getBlock("latest");
+    if (current && BigInt(current.timestamp) > disputeEnd) break;
+    process.stdout.write(".");
+    await new Promise((r) => setTimeout(r, 5000));
+  }
+  process.stdout.write("\n");
 
-  console.log("Claiming winnings from owner...");
-  const claimTx = await shieldBet.claimWinningsWithSig(marketId, ownerStake, claimExpiry, claimSignature);
+  console.log("Finalizing outcome...");
+  await (await shieldBet.finalizeOutcome(marketId, 0)).wait();
+
+  console.log("Claiming winnings...");
+  const claimTx = await shieldBet.claimWinnings(marketId);
   const claimReceipt = await claimTx.wait();
-  if (!claimReceipt || claimReceipt.status !== 1) {
-    throw new Error("Claim transaction failed");
-  }
+  if (!claimReceipt || claimReceipt.status !== 1) throw new Error("Claim failed");
 
-  console.log("Attempting second claim from owner (expected failure)...");
-  try {
-    await shieldBet.claimWinningsWithSig(marketId, ownerStake, claimExpiry, claimSignature);
-    throw new Error("Second owner claim unexpectedly succeeded");
-  } catch (error) {
-    console.log("Second claim reverted as expected.");
-  }
-
-  console.log("Live demo completed successfully.");
-  console.log(`Contract: ${contractAddress}`);
-  console.log(`Market ID: ${marketId.toString()}`);
-  console.log(`Winner: ${owner.address}`);
-  console.log(`Claim tx: ${claimReceipt.hash}`);
+  console.log("E2E demo completed successfully!");
+  console.log(`Final output: https://explorer.zama.ai/address/${contractAddress}`);
 }
 
 main().catch((error) => {
