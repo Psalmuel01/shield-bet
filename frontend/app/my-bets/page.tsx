@@ -15,6 +15,7 @@ export default function MyBetsPage() {
   const normalizedAddress = address ? getAddress(address) : null;
   const { data: walletClient } = useWalletClient();
   const [decryptedPositions, setDecryptedPositions] = useState<Record<string, number>>({});
+  const [failedRecoveries, setFailedRecoveries] = useState<Record<string, boolean>>({});
 
   const { data: marketCount } = useReadContract({
     ...shieldBetConfig,
@@ -34,7 +35,7 @@ export default function MyBetsPage() {
       { ...shieldBetConfig, functionName: "markets" as const, args: [marketId] as const },
       { ...shieldBetConfig, functionName: "hasPosition" as const, args: [marketId, address] as const },
       { ...shieldBetConfig, functionName: "claimablePayouts" as const, args: [marketId, address] as const },
-      { ...shieldBetConfig, functionName: "getMyOutcome" as const, args: [marketId] as const, account: address },
+      { ...shieldBetConfig, functionName: "getBetOutcomeHandle" as const, args: [marketId, address] as const },
       { ...shieldBetConfig, functionName: "stakeAmounts" as const, args: [marketId, address] as const },
       { ...shieldBetConfig, functionName: "hasClaimed" as const, args: [marketId, address] as const },
       { ...shieldBetConfig, functionName: "getOutcomeLabels" as const, args: [marketId] as const }
@@ -85,8 +86,16 @@ export default function MyBetsPage() {
           next[entry.marketId.toString()] = Number(decrypted[entry.handle]);
         }
         setDecryptedPositions(next);
+        setFailedRecoveries({});
       } catch (error) {
         logWarn("my-bets", "failed to decrypt positions", error);
+        if (!cancelled) {
+          const nextFailures: Record<string, boolean> = {};
+          for (const entry of handles) {
+            nextFailures[entry.marketId.toString()] = true;
+          }
+          setFailedRecoveries(nextFailures);
+        }
       }
     }
 
@@ -123,7 +132,7 @@ export default function MyBetsPage() {
 
       const labels = (labelsRes?.status === "success" ? (labelsRes.result as string[]) : []) || ["YES", "NO"];
       const decryptedIdx = decryptedPositions[marketId.toString()];
-      const position = decryptedIdx !== undefined ? labels[decryptedIdx] : "Encrypted";
+      const position = decryptedIdx !== undefined ? labels[decryptedIdx] : failedRecoveries[marketId.toString()] ? "Unavailable" : "Decrypting...";
 
       const stakeWei = BigInt(((stakeRes?.status === "success" ? stakeRes.result : 0n) as bigint) || 0n);
       const claimablePayoutWei = BigInt(((claimablePayoutRes?.status === "success" ? claimablePayoutRes.result : 0n) as bigint) || 0n);
@@ -153,7 +162,7 @@ export default function MyBetsPage() {
     }
 
     return next;
-  }, [address, batch, decryptedPositions, ids]);
+  }, [address, batch, decryptedPositions, failedRecoveries, ids]);
 
   const stats = useMemo(() => {
     const total = rows.length;
@@ -180,7 +189,7 @@ export default function MyBetsPage() {
             My <span className="vm-text-gradient">Positions</span>
           </h1>
           <p className="vm-page-subtitle mt-4">
-            Track your confidential market exposure, recovered outcome selections, claimable positions, and completed settlements in one place.
+            Track your stake, recover your own market side locally, and see exactly where each position sits in the market lifecycle.
           </p>
         </div>
 
@@ -207,7 +216,7 @@ export default function MyBetsPage() {
           </div>
           <h2 className="font-display mt-6 text-2xl font-bold text-white">Connect your wallet</h2>
           <p className="mx-auto mt-3 max-w-md text-sm leading-7 text-white/55">
-            Your portfolio is tied to the wallet that placed each market position. Connect it to recover your confidential side selections locally.
+            Your portfolio is tied to the wallet that placed each market position. Connect it to recover your own side selections locally. They stay private to everyone else, not to you.
           </p>
         </div>
       ) : (

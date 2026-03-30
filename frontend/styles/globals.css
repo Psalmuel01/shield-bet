@@ -778,6 +778,29 @@ textarea {
   box-shadow: 0 35px 70px -40px rgba(0, 0, 0, 0.8);
 }
 
+.vm-success-modal {
+  position: relative;
+  width: min(100%, 38rem);
+  padding: 2rem;
+  background:
+    radial-gradient(circle at top, rgba(16, 185, 129, 0.12), transparent 36%),
+    radial-gradient(circle at bottom right, rgba(108, 142, 255, 0.12), transparent 30%),
+    var(--surface-strong);
+}
+
+.vm-success-modal__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 4.5rem;
+  height: 4.5rem;
+  margin: 0 auto;
+  border-radius: 1.4rem;
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.18), rgba(0, 228, 180, 0.24));
+  color: #a7f3d0;
+  box-shadow: 0 22px 50px -28px rgba(16, 185, 129, 0.7);
+}
+
 .enc-pulse {
   animation: encPulse 1.8s ease-in-out infinite;
 }

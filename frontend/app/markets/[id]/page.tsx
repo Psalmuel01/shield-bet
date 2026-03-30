@@ -26,6 +26,7 @@ import {
   useWalletClient,
   useWriteContract
 } from "wagmi";
+import { ActionSuccessModal, type ActionSuccessState } from "@/components/action-success-modal";
 import { BetPlacement } from "@/components/bet-placement";
 import { EncryptedActivity } from "@/components/encrypted-activity";
 import { RuntimeAlerts } from "@/components/runtime-alerts";
@@ -57,12 +58,14 @@ export default function MarketDetailPage() {
   const [isBetting, setIsBetting] = useState(false);
   const [decryptedPosition, setDecryptedPosition] = useState<number | null>(null);
   const [isDecrypting, setIsDecrypting] = useState(false);
+  const [positionRecoveryError, setPositionRecoveryError] = useState<string | null>(null);
   const [settlementAddresses, setSettlementAddresses] = useState("");
   const [winnerAddress, setWinnerAddress] = useState("");
   const [manualPayoutEth, setManualPayoutEth] = useState("");
   const [isOpeningSettlement, setIsOpeningSettlement] = useState(false);
   const [isAssigningPayout, setIsAssigningPayout] = useState(false);
   const [isClaiming, setIsClaiming] = useState(false);
+  const [successState, setSuccessState] = useState<ActionSuccessState | null>(null);
 
   const { address } = useAccount();
   const publicClient = usePublicClient();
@@ -111,7 +114,7 @@ export default function MarketDetailPage() {
     functionName: "owner"
   });
 
-  const { data: hasPosition } = useReadContract({
+  const { data: hasPosition, refetch: refetchHasPosition } = useReadContract({
     ...shieldBetConfig,
     functionName: "hasPosition",
     args: [marketId, address || ZERO_ADDRESS],
@@ -120,9 +123,8 @@ export default function MarketDetailPage() {
 
   const { data: myOutcomeHandle } = useReadContract({
     ...shieldBetConfig,
-    functionName: "getMyOutcome",
-    args: [marketId],
-    account: address,
+    functionName: "getBetOutcomeHandle",
+    args: [marketId, address || ZERO_ADDRESS],
     query: { enabled: Boolean(address && hasPosition) }
   });
 
@@ -140,6 +142,13 @@ export default function MarketDetailPage() {
     query: { enabled: Boolean(address) }
   });
 
+  const { data: myStakeAmount, refetch: refetchMyStakeAmount } = useReadContract({
+    ...shieldBetConfig,
+    functionName: "stakeAmounts",
+    args: [marketId, address || ZERO_ADDRESS],
+    query: { enabled: Boolean(address) }
+  });
+
   const parsedMarket = useMemo(() => decodeMarketView(marketData), [marketData]);
   const parsedDetails = useMemo(() => decodeMarketDetails(marketDetailsData), [marketDetailsData]);
   const labels = useMemo(() => ((outcomeLabels as string[]) || ["YES", "NO"]).filter(Boolean), [outcomeLabels]);
@@ -153,6 +162,11 @@ export default function MarketDetailPage() {
     if (!parsedMarket) return "Binary";
     return getMarketType(parsedMarket.marketType);
   }, [parsedMarket]);
+
+  useEffect(() => {
+    setDecryptedPosition(null);
+    setPositionRecoveryError(null);
+  }, [marketId, myOutcomeHandle, address]);
 
   useEffect(() => {
     if (!myOutcomeHandle || !address || !walletClient || decryptedPosition !== null || isDecrypting) return;
@@ -173,9 +187,13 @@ export default function MarketDetailPage() {
 
         if (!cancelled) {
           setDecryptedPosition(Number(result[myOutcomeHandle as `0x${string}`]));
+          setPositionRecoveryError(null);
         }
       } catch (error) {
         logError("market-detail", "decryption failed", error);
+        if (!cancelled) {
+          setPositionRecoveryError("We could not recover your side from the encrypted handle for this wallet.");
+        }
       } finally {
         if (!cancelled) setIsDecrypting(false);
       }
@@ -214,7 +232,14 @@ export default function MarketDetailPage() {
       setStatusMessage("Confirming on-chain...");
       await publicClient?.waitForTransactionReceipt({ hash: txHash });
       setStatusMessage("Bet placed successfully.");
-      await refetchMarket();
+      await Promise.all([refetchMarket(), refetchHasPosition(), refetchMyStakeAmount()]);
+      setSuccessState({
+        title: "Position placed successfully",
+        description: `${Number(formatEther(amountWei)).toFixed(4)} ETH is now committed to ${labels[selectedOutcome]}. Your side stays private to everyone else, and visible to you here and in My Bets.`,
+        txHash,
+        secondaryAction: { label: "Stay Here", variant: "secondary" },
+        primaryAction: { label: "Open My Bets", href: "/my-bets" }
+      });
     } catch (error) {
       logError("market-detail", "bet failed", error);
       setStatusMessage(error instanceof Error ? error.message : "Bet failed");
@@ -236,6 +261,12 @@ export default function MarketDetailPage() {
       await publicClient?.waitForTransactionReceipt({ hash: txHash });
       setStatusMessage("Outcome proposed.");
       await refetchMarket();
+      setSuccessState({
+        title: "Resolution proposed",
+        description: `${labels[outcomeIdx] || `Outcome ${outcomeIdx}`} has been proposed and the dispute window is now live.`,
+        txHash,
+        primaryAction: { label: "Continue" }
+      });
     } catch (error) {
       logError("market-detail", "propose failed", error);
       setStatusMessage(error instanceof Error ? error.message : "Propose failed");
@@ -255,6 +286,12 @@ export default function MarketDetailPage() {
       await publicClient?.waitForTransactionReceipt({ hash: txHash });
       setStatusMessage("Challenge submitted.");
       await refetchMarket();
+      setSuccessState({
+        title: "Challenge submitted",
+        description: "The proposed outcome has been challenged. This market now moves into its dispute resolution phase.",
+        txHash,
+        primaryAction: { label: "Continue" }
+      });
     } catch (error) {
       logError("market-detail", "challenge failed", error);
       setStatusMessage(error instanceof Error ? error.message : "Challenge failed");
@@ -273,6 +310,12 @@ export default function MarketDetailPage() {
       await publicClient?.waitForTransactionReceipt({ hash: txHash });
       setStatusMessage("Market finalized.");
       await refetchMarket();
+      setSuccessState({
+        title: "Market finalized",
+        description: "The official outcome is now locked on-chain. Settlement opening, payout assignment, and claims can proceed from here.",
+        txHash,
+        primaryAction: { label: "Continue" }
+      });
     } catch (error) {
       logError("market-detail", "finalize failed", error);
       setStatusMessage(error instanceof Error ? error.message : "Finalize failed");
@@ -316,7 +359,14 @@ export default function MarketDetailPage() {
       if (receipt?.status === "success") {
         setStatusMessage(claimMessage);
       }
-      await Promise.all([refetchMarket(), refetchClaimablePayout()]);
+      await Promise.all([refetchMarket(), refetchClaimablePayout(), refetchMyStakeAmount()]);
+      setSuccessState({
+        title: "Winnings claimed",
+        description: `${Number(formatEther(claimablePayoutWei)).toFixed(4)} ETH has been released to your wallet.${claimMessage.includes("Lit verification completed") ? " Lit verification also completed successfully." : ""}`,
+        txHash,
+        secondaryAction: { label: "Stay Here", variant: "secondary" },
+        primaryAction: { label: "Open My Bets", href: "/my-bets" }
+      });
     } catch (error) {
       logError("market-detail", "claim failed", error);
       setStatusMessage(error instanceof Error ? error.message : "Claim failed");
@@ -363,6 +413,12 @@ export default function MarketDetailPage() {
       await publicClient?.waitForTransactionReceipt({ hash: txHash });
       setStatusMessage("Settlement data opened.");
       await refetchMarket();
+      setSuccessState({
+        title: "Settlement data opened",
+        description: `${bettors.length} bettor ${bettors.length === 1 ? "address has" : "addresses have"} been opened for the finalized settlement flow.`,
+        txHash,
+        primaryAction: { label: "Continue" }
+      });
     } catch (error) {
       logError("market-detail", "open settlement failed", error);
       setStatusMessage(error instanceof Error ? error.message : "Failed to open settlement data");
@@ -388,6 +444,12 @@ export default function MarketDetailPage() {
       await publicClient?.waitForTransactionReceipt({ hash: txHash });
       setStatusMessage("Payout assigned.");
       await refetchClaimablePayout();
+      setSuccessState({
+        title: "Payout assigned",
+        description: `${manualPayoutEth} ETH has been assigned to ${getAddress(winnerAddress.trim())} for claim.`,
+        txHash,
+        primaryAction: { label: "Continue" }
+      });
     } catch (error) {
       logError("market-detail", "assign payout failed", error);
       setStatusMessage(error instanceof Error ? error.message : "Failed to assign payout");
@@ -421,6 +483,7 @@ export default function MarketDetailPage() {
   return (
     <section className="vm-page page-enter">
       <RuntimeAlerts diagnostics={diagnostics} />
+      <ActionSuccessModal open={Boolean(successState)} state={successState} onClose={() => setSuccessState(null)} />
 
       <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.18em] text-white/35">
         <Link href="/markets" className="transition hover:text-[var(--primary)]">
@@ -721,7 +784,18 @@ export default function MarketDetailPage() {
                   <div className="rounded-[1.35rem] border border-[var(--primary)]/16 bg-[var(--primary)]/8 p-4">
                     <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--primary)]">Recovered outcome</div>
                     <div className="font-display mt-2 text-xl font-bold text-white">
-                      {isDecrypting ? "Decrypting..." : decryptedPosition !== null ? labels[decryptedPosition] : "Encrypted"}
+                      {isDecrypting ? "Decrypting..." : decryptedPosition !== null ? labels[decryptedPosition] : positionRecoveryError ? "Unavailable" : "Recovering..."}
+                    </div>
+                  </div>
+                  {positionRecoveryError ? (
+                    <div className="rounded-[1.2rem] border border-amber-400/18 bg-amber-400/10 px-4 py-3 text-sm leading-7 text-amber-200">
+                      {positionRecoveryError}
+                    </div>
+                  ) : null}
+                  <div className="rounded-[1.2rem] border border-white/6 bg-white/[0.03] px-4 py-3">
+                    <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-white/35">Your stake</div>
+                    <div className="mt-2 text-base font-semibold text-white">
+                      {typeof myStakeAmount === "bigint" && myStakeAmount > 0n ? `${Number(formatEther(myStakeAmount)).toFixed(4)} ETH` : "Loading..."}
                     </div>
                   </div>
                   {isFinalized && decryptedPosition !== null ? (

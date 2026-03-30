@@ -87,7 +87,7 @@ export function MyBetsTable({ rows }: MyBetsTableProps) {
                 <td>
                   <span
                     className={`inline-flex rounded-full border px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.16em] ${
-                      row.position === "Encrypted"
+                      row.position === "Decrypting..."
                         ? "border-white/10 bg-white/6 text-white/55"
                         : "border-[var(--primary)]/20 bg-[var(--primary)]/10 text-[var(--primary)]"
                     }`}

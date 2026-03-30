@@ -2,9 +2,10 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { Calendar, FileText, Plus, Share2, Tag, Trash2 } from "lucide-react";
+import { Calendar, FileText, Plus, Tag, Trash2 } from "lucide-react";
 import { decodeEventLog, parseAbiItem } from "viem";
 import { useAccount, usePublicClient, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
+import { ActionSuccessModal, type ActionSuccessState } from "@/components/action-success-modal";
 import { RuntimeAlerts } from "@/components/runtime-alerts";
 import { shieldBetConfig } from "@/lib/contract";
 import { MarketCategory } from "@/lib/market-ui";
@@ -29,17 +30,11 @@ export default function CreateMarketPage() {
   const [closingDate, setClosingDate] = useState("");
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [createdMarketId, setCreatedMarketId] = useState<bigint | null>(null);
+  const [successState, setSuccessState] = useState<ActionSuccessState | null>(null);
 
   const { data: hash, isPending, writeContractAsync } = useWriteContract();
   const { isLoading: isConfirming } = useWaitForTransactionReceipt({ hash });
   const diagnostics = useMemo(() => getRuntimeDiagnostics(), []);
-
-  const shareUrl = useMemo(() => {
-    if (!createdMarketId || typeof window === "undefined") return "";
-    const text = encodeURIComponent(`I just created a confidential market on ShieldBet: ${question}`);
-    const url = encodeURIComponent(`${window.location.origin}/markets/${createdMarketId.toString()}`);
-    return `https://twitter.com/intent/tweet?text=${text}&url=${url}`;
-  }, [createdMarketId, question]);
 
   function addOutcome() {
     setOutcomeLabels((current) => [...current, `Option ${current.length + 1}`]);
@@ -113,6 +108,20 @@ export default function CreateMarketPage() {
       if (!marketId) throw new Error("Failed to resolve market ID from logs.");
       setCreatedMarketId(marketId);
       setStatusMessage("Market created successfully.");
+      setSuccessState({
+        title: "Market created successfully",
+        description: "Your market is now live and ready for betting. The next step is to open it, review the market state, and share it with participants.",
+        txHash,
+        secondaryAction: {
+          label: "Open Markets",
+          href: "/markets",
+          variant: "secondary"
+        },
+        primaryAction: {
+          label: "View Market",
+          href: `/markets/${marketId.toString()}`
+        }
+      });
     } catch (error) {
       logError("create-market", "failed", error);
       setStatusMessage(error instanceof Error ? error.message : "Failed to create market");
@@ -122,6 +131,7 @@ export default function CreateMarketPage() {
   return (
     <section className="vm-page page-enter">
       <div className="mx-auto w-full max-w-5xl space-y-6">
+        <ActionSuccessModal open={Boolean(successState)} state={successState} onClose={() => setSuccessState(null)} />
         <div className="text-center">
           <div className="vm-page-eyebrow mx-auto">
             <Plus className="h-3.5 w-3.5" />
@@ -131,8 +141,7 @@ export default function CreateMarketPage() {
             Launch Your <span className="vm-text-gradient">Prediction</span>
           </h1>
           <p className="vm-page-subtitle mx-auto mt-4">
-            Deploy a market using your existing ShieldBet contract flow, but with the stronger creation UX and hierarchy
-            from the attached template.
+            Create a clear market, define the outcomes, set the expiry, and publish it into the owner-driven v1 resolution flow.
           </p>
         </div>
 
@@ -194,7 +203,7 @@ export default function CreateMarketPage() {
                     <button
                       type="button"
                       onClick={addOutcome}
-                      className="text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--primary)] transition hover:opacity-80"
+                      className="text-[11px]! font-bold uppercase tracking-[0.18em] text-[var(--primary)] transition hover:opacity-80"
                     >
                       Add option
                     </button>
@@ -329,18 +338,14 @@ export default function CreateMarketPage() {
 
               {createdMarketId ? (
                 <div className="rounded-[1.75rem] border border-[var(--primary)]/18 bg-[var(--primary)]/8 p-6 text-center">
-                  <div className="font-display text-xl font-bold text-white">Market created successfully</div>
+                  <div className="font-display text-xl font-bold text-white">Latest market</div>
                   <p className="mt-2 text-sm leading-7 text-white/68">
-                    Your new market is live. Open it now or share it immediately.
+                    Market #{createdMarketId.toString()} was created from this session.
                   </p>
-                  <div className="mt-5 flex flex-wrap justify-center gap-3">
+                  <div className="mt-5 flex justify-center">
                     <Link href={`/markets/${createdMarketId}`} className="vm-secondary-btn">
-                      View Market
+                      Open Market
                     </Link>
-                    <a href={shareUrl} target="_blank" rel="noreferrer" className="vm-primary-btn min-h-0 px-5 py-3">
-                      <Share2 className="h-4 w-4" />
-                      Share
-                    </a>
                   </div>
                 </div>
               ) : null}

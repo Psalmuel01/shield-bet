@@ -22,3 +22,9 @@ export function cidToExplorer(cid: string) {
   if (!cid) return "";
   return `https://cid.ipfs.tech/#${cid}`;
 }
+
+export function txToExplorer(txHash: string) {
+  const base = process.env.NEXT_PUBLIC_CHAIN_EXPLORER;
+  if (!base || !txHash) return "";
+  return `${base.replace(/\/$/, "")}/tx/${txHash}`;
+}
