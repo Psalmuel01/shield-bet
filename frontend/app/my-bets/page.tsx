@@ -72,27 +72,47 @@ export default function MyBetsPage() {
 
       if (!handles.length) return;
 
+      const unresolvedHandles = handles.filter((entry) => {
+        const existing = decryptedPositions[entry.marketId.toString()];
+        const failed = failedRecoveries[entry.marketId.toString()];
+        return existing === undefined && !failed;
+      });
+
+      if (!unresolvedHandles.length) return;
+
       try {
         const decrypted = await decryptUserHandles({
           contractAddress: shieldBetConfig.address,
           userAddress,
           walletClient: signer,
-          handles: handles.map((entry) => entry.handle)
+          handles: unresolvedHandles.map((entry) => entry.handle)
         });
 
         if (cancelled) return;
 
-        const next: Record<string, number> = {};
-        for (const entry of handles) {
-          next[entry.marketId.toString()] = Number(decrypted[entry.handle]);
+        const next = { ...decryptedPositions };
+        for (const entry of unresolvedHandles) {
+          if (entry.handle in decrypted) {
+            next[entry.marketId.toString()] = Number(decrypted[entry.handle]);
+          }
         }
+
         setDecryptedPositions(next);
-        setFailedRecoveries({});
+
+        const remainingFailed = { ...failedRecoveries };
+        for (const entry of unresolvedHandles) {
+          if (!(entry.handle in decrypted)) {
+            remainingFailed[entry.marketId.toString()] = true;
+          } else {
+            delete remainingFailed[entry.marketId.toString()];
+          }
+        }
+        setFailedRecoveries(remainingFailed);
       } catch (error) {
         logWarn("my-bets", "failed to decrypt positions", error);
         if (!cancelled) {
-          const nextFailures: Record<string, boolean> = {};
-          for (const entry of handles) {
+          const nextFailures = { ...failedRecoveries };
+          for (const entry of unresolvedHandles) {
             nextFailures[entry.marketId.toString()] = true;
           }
           setFailedRecoveries(nextFailures);
@@ -145,9 +165,9 @@ export default function MyBetsPage() {
           : `${Number(formatUnits(stakeWei, 6)).toFixed(2)} USDC`;
       const isClaimable = Boolean(
         details?.winningTotalIsPublished &&
-          decryptedIdx !== undefined &&
-          decryptedIdx === market.outcome &&
-          !hasClaimed
+        decryptedIdx !== undefined &&
+        decryptedIdx === market.outcome &&
+        !hasClaimed
       );
 
       let status: MyBetRow["status"] = "Open";

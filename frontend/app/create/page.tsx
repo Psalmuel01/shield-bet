@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { Calendar, Coins, FileText, Plus, ShieldCheck, Tag, Trash2 } from "lucide-react";
+import { Calendar, Check, Coins, FileText, Plus, ShieldCheck, Tag, Trash2 } from "lucide-react";
 import { decodeEventLog, parseAbiItem, parseEther, parseUnits } from "viem";
 import { useAccount, usePublicClient, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
 import { ActionSuccessModal, type ActionSuccessState } from "@/components/action-success-modal";
@@ -10,6 +10,7 @@ import { ActionSuccessModal, type ActionSuccessState } from "@/components/action
 import { RuntimeAlerts } from "@/components/runtime-alerts";
 import { erc20Abi } from "@/lib/abi";
 import { shieldBetConfig } from "@/lib/contract";
+import { formatDeadline, getCountdown, truncateErrorMessage } from "@/lib/format";
 import { MarketAsset, MarketCategory } from "@/lib/market-ui";
 import { getRuntimeDiagnostics } from "@/lib/runtime-config";
 import { logError } from "@/lib/telemetry";
@@ -36,6 +37,7 @@ export default function CreateMarketPage() {
   const [seedLiquidity, setSeedLiquidity] = useState("");
   const [closingDate, setClosingDate] = useState("");
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [isErrorMessage, setIsErrorMessage] = useState(false);
   const [createdMarketId, setCreatedMarketId] = useState<bigint | null>(null);
   const [successState, setSuccessState] = useState<ActionSuccessState | null>(null);
 
@@ -59,16 +61,19 @@ export default function CreateMarketPage() {
   async function onCreate() {
     if (!address) {
       setStatusMessage("Connect your wallet first.");
+      setIsErrorMessage(true);
       return;
     }
 
     if (!question.trim() || !closingDate || !resolutionCriteria.trim()) {
       setStatusMessage("All fields are required.");
+      setIsErrorMessage(true);
       return;
     }
 
     if (outcomeLabels.some((label) => !label.trim())) {
       setStatusMessage("Every outcome label needs a value.");
+      setIsErrorMessage(true);
       return;
     }
 
@@ -87,23 +92,27 @@ export default function CreateMarketPage() {
         : 0n;
     } catch (error) {
       setStatusMessage("Invalid numeric value for min stake or seed liquidity. Use decimals like 0.1 ETH or 50 USDC.");
+      setIsErrorMessage(true);
       return;
     }
 
     if (parsedMinStake < 0n || parsedSeedLiquidity < 0n) {
       setStatusMessage("Min stake and seed liquidity must be >= 0.");
+      setIsErrorMessage(true);
       return;
     }
 
     const deadline = Math.floor(new Date(closingDate).getTime() / 1000);
     if (!Number.isFinite(deadline) || deadline <= Math.floor(Date.now() / 1000)) {
       setStatusMessage("Closing date must be in the future.");
+      setIsErrorMessage(true);
       return;
     }
 
     try {
       setStatusMessage("Creating market on-chain...");
-      setCreatedMarketId(null);
+      setIsErrorMessage(false);
+      setIsErrorMessage(false);
 
       if (asset === "USDC" && !quoteToken.trim()) {
         throw new Error("USDC markets require a token address.");
@@ -111,6 +120,8 @@ export default function CreateMarketPage() {
 
       if (asset === "USDC" && parsedSeedLiquidity > 0n) {
         setStatusMessage("Approving USDC seed liquidity...");
+        setIsErrorMessage(false);
+        setIsErrorMessage(false);
         const approvalHash = await writeContractAsync({
           address: quoteToken as `0x${string}`,
           abi: erc20Abi,
@@ -159,6 +170,7 @@ export default function CreateMarketPage() {
       if (!marketId) throw new Error("Failed to resolve market ID from logs.");
       setCreatedMarketId(marketId);
       setStatusMessage("Market created successfully.");
+      setIsErrorMessage(false);
       setSuccessState({
         title: "Market created successfully",
         description: "Your market is now live and ready for betting. The next step is to open it, review the market state, and share it with participants.",
@@ -175,7 +187,9 @@ export default function CreateMarketPage() {
       });
     } catch (error) {
       logError("create-market", "failed", error);
-      setStatusMessage(error instanceof Error ? error.message : "Failed to create market");
+      const errorMessage = error instanceof Error ? error.message : "Failed to create market";
+      setStatusMessage(truncateErrorMessage(errorMessage));
+      setIsErrorMessage(true);
     }
   }
 
@@ -228,9 +242,12 @@ export default function CreateMarketPage() {
                       setMarketType(0);
                       setOutcomeLabels(["YES", "NO"]);
                     }}
-                    className={`vm-soft-btn justify-center py-4 ${marketType === 0 ? "border-[var(--primary)]/24 bg-[var(--primary)]/12 text-[var(--primary)]" : ""
+                    className={`vm-soft-btn justify-center py-4 transition-all duration-200 ${marketType === 0
+                        ? "border-[var(--primary)] bg-[var(--primary)]/15 text-[var(--primary)] shadow-lg shadow-[var(--primary)]/20 ring-2 ring-[var(--primary)]/30"
+                        : "border-white/10 bg-white/[0.02] text-white/70 hover:border-white/20 hover:bg-white/[0.05] hover:text-white"
                       }`}
                   >
+                    {marketType === 0 && <Check className="h-4 w-4 mr-2" />}
                     Binary
                   </button>
                   <button
@@ -239,9 +256,12 @@ export default function CreateMarketPage() {
                       setMarketType(1);
                       setOutcomeLabels(["Option 1", "Option 2"]);
                     }}
-                    className={`vm-soft-btn justify-center py-4 ${marketType === 1 ? "border-[var(--primary)]/24 bg-[var(--primary)]/12 text-[var(--primary)]" : ""
+                    className={`vm-soft-btn justify-center py-4 transition-all duration-200 ${marketType === 1
+                        ? "border-[var(--primary)] bg-[var(--primary)]/15 text-[var(--primary)] shadow-lg shadow-[var(--primary)]/20 ring-2 ring-[var(--primary)]/30"
+                        : "border-white/10 bg-white/[0.02] text-white/70 hover:border-white/20 hover:bg-white/[0.05] hover:text-white"
                       }`}
                   >
+                    {marketType === 1 && <Check className="h-4 w-4 mr-2" />}
                     Categorical
                   </button>
                 </div>
@@ -352,8 +372,12 @@ export default function CreateMarketPage() {
                         key={option}
                         type="button"
                         onClick={() => setAsset(option)}
-                        className={`vm-soft-btn justify-center py-4 ${asset === option ? "border-[var(--primary)]/24 bg-[var(--primary)]/12 text-[var(--primary)]" : ""}`}
+                        className={`vm-soft-btn justify-center py-4 transition-all duration-200 ${asset === option
+                            ? "border-[var(--primary)] bg-[var(--primary)]/15 text-[var(--primary)] shadow-lg shadow-[var(--primary)]/20 ring-2 ring-[var(--primary)]/30"
+                            : "border-white/10 bg-white/[0.02] text-white/70 hover:border-white/20 hover:bg-white/[0.05] hover:text-white"
+                          }`}
                       >
+                        {asset === option && <Check className="h-4 w-4 mr-2" />}
                         {option}
                       </button>
                     ))}
@@ -481,7 +505,10 @@ export default function CreateMarketPage() {
               </button>
 
               {statusMessage ? (
-                <div className="rounded-[1.25rem] border border-white/6 bg-white/[0.03] p-4 text-sm leading-7 text-white/72">
+                <div className={`rounded-[1.25rem] border p-4 text-sm leading-7 ${isErrorMessage
+                  ? "border-red-400/20 bg-red-400/10 text-red-300"
+                  : "border-white/6 bg-white/[0.03] text-white/72"
+                  }`}>
                   {statusMessage}
                 </div>
               ) : null}

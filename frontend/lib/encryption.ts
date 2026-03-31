@@ -29,6 +29,8 @@ const MAX_UINT64 = (1n << 64n) - 1n;
 let fhevmInstancePromise: Promise<FhevmInstance> | null = null;
 let fhevmSdkInitPromise: Promise<void> | null = null;
 
+const decryptHandleCache = new Map<string, bigint | number | boolean | string>();
+
 async function getFhevmInstance(): Promise<FhevmInstance> {
   if (fhevmInstancePromise) return fhevmInstancePromise;
 
@@ -129,6 +131,21 @@ export async function decryptUserHandles({
   const sanitizedHandles = handles.filter(Boolean) as `0x${string}`[];
   if (!sanitizedHandles.length) return {};
 
+  const cachedResult: Record<`0x${string}`, bigint | number | boolean | string> = {};
+  const handlesToDecrypt: `0x${string}`[] = [];
+
+  for (const handle of sanitizedHandles) {
+    if (decryptHandleCache.has(handle)) {
+      cachedResult[handle] = decryptHandleCache.get(handle)!;
+    } else {
+      handlesToDecrypt.push(handle);
+    }
+  }
+
+  if (handlesToDecrypt.length === 0) {
+    return cachedResult;
+  }
+
   const instance = await getFhevmInstance();
   const keypair = instance.generateKeypair();
   const startTimestamp = Math.floor(Date.now() / 1000);
@@ -145,8 +162,8 @@ export async function decryptUserHandles({
     account: walletClient.account || getAddress(userAddress)
   });
 
-  const result = await instance.userDecrypt(
-    sanitizedHandles.map((handle) => ({
+  const decrypted = await instance.userDecrypt(
+    handlesToDecrypt.map((handle) => ({
       handle,
       contractAddress: getAddress(contractAddress)
     })),
@@ -159,5 +176,15 @@ export async function decryptUserHandles({
     durationDays
   );
 
-  return result as Record<`0x${string}`, bigint | number | boolean | string>;
+  for (const handle of handlesToDecrypt) {
+    if (handle in decrypted) {
+      decryptHandleCache.set(handle, decrypted[handle]);
+      cachedResult[handle] = decrypted[handle];
+    }
+  }
+
+  return {
+    ...cachedResult,
+    ...decrypted
+  } as Record<`0x${string}`, bigint | number | boolean | string>;
 }

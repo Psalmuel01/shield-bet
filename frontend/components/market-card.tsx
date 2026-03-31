@@ -53,8 +53,12 @@ export function MarketCard({
   const status = getMarketStatus(rawStatus, deadline);
   const marketType = getMarketType(rawType);
   const asset = getMarketAsset(assetType);
-  const bandCount = useMemo(() => getEncryptedBandCount(marketId), [marketId]);
-  const bandText = renderEncryptedDots(bandCount);
+
+  // Since exact position count is unavailable from chain (encrypted), use deterministic count for visual variety
+  // In production, this should be tracked separately from events or contract state
+  // const bandCount = useMemo(() => getEncryptedBandCount(marketId), [marketId]);
+  // const bandText = renderEncryptedDots(bandCount);
+  
   const closingLabel = status === "Active" ? getCountdown(deadline) : formatDeadline(deadline);
   const statusBlurb = getMarketStatusBlurb(status);
 
@@ -84,18 +88,21 @@ export function MarketCard({
         </div>
       </div>
 
-      <div className="vm-encrypted-band mt-6">
+      {/* <div className="vm-encrypted-band mt-6">
         <div className="flex items-center justify-between gap-4">
           <div>
             <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--primary)]">Encrypted activity</div>
             <div className="mt-3 flex items-center gap-3">
               <span className="vm-encrypted-dots">{bandText}</span>
-              <span className="text-sm font-semibold text-white/82">{bandCount} confidential positions</span>
+              <span className="text-sm font-semibold text-white/82">
+                {bandCount === 1 ? "1 confidential position" : `${bandCount} confidential position${bandCount !== 1 ? "s" : ""}`}
+                {bandCount >= 8 ? " • Active" : bandCount >= 6 ? " • Growing" : " • Emerging"}
+              </span>
             </div>
           </div>
           <Users className="h-5 w-5 text-[var(--primary)]" />
         </div>
-      </div>
+      </div> */}
 
       <div className="vm-card__footer mt-6">
         <div className="space-y-1">

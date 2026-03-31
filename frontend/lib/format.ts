@@ -28,3 +28,17 @@ export function txToExplorer(txHash: string) {
   if (!base || !txHash) return "";
   return `${base.replace(/\/$/, "")}/tx/${txHash}`;
 }
+
+export function truncateErrorMessage(message: string, maxLength = 120): string {
+  if (message.length <= maxLength) return message;
+
+  // Try to truncate at a word boundary if possible
+  const truncated = message.substring(0, maxLength);
+  const lastSpace = truncated.lastIndexOf(' ');
+
+  if (lastSpace > maxLength * 0.7) {
+    return truncated.substring(0, lastSpace) + '...';
+  }
+
+  return truncated + '...';
+}

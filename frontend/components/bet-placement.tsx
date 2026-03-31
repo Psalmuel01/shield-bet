@@ -45,18 +45,17 @@ export function BetPlacement({
 
       <div className="grid gap-3 md:grid-cols-2">
         {outcomeLabels.map((label, index) => {
-          const selected = selectedOutcome === index;
+          const selected = !alreadyBet && selectedOutcome === index;
           return (
             <button
               key={`${label}-${index}`}
               type="button"
               disabled={alreadyBet || isSubmitting}
               onClick={() => onSelectOutcome(index)}
-              className={`rounded-[1.35rem] border p-4 text-left transition ${
-                selected
+              className={`rounded-[1.35rem] border p-4 text-left transition ${selected
                   ? "border-[var(--primary)]/30 bg-[var(--primary)]/10"
                   : "border-white/6 bg-white/[0.03] hover:border-white/12 hover:bg-white/[0.05]"
-              } disabled:cursor-not-allowed disabled:opacity-55`}
+                } disabled:cursor-not-allowed disabled:opacity-55`}
             >
               <div className="flex items-center justify-between">
                 <div>
@@ -64,9 +63,8 @@ export function BetPlacement({
                   <div className="font-display mt-2 text-lg font-bold text-white">{label}</div>
                 </div>
                 <span
-                  className={`inline-flex h-7 w-7 items-center justify-center rounded-full border ${
-                    selected ? "border-[var(--primary)] bg-[var(--primary)] text-[#081018]" : "border-white/12 text-white/45"
-                  }`}
+                  className={`inline-flex h-7 w-7 items-center justify-center rounded-full border ${selected ? "border-[var(--primary)] bg-[var(--primary)] text-[#081018]" : "border-white/12 text-white/45"
+                    }`}
                 >
                   {selected ? <Check className="h-4 w-4" /> : index + 1}
                 </span>

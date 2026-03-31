@@ -32,7 +32,7 @@ import { RuntimeAlerts } from "@/components/runtime-alerts";
 import { erc20Abi } from "@/lib/abi";
 import { shieldBetConfig } from "@/lib/contract";
 import { decryptUserHandles, encryptBetInputs } from "@/lib/encryption";
-import { formatDeadline, getCountdown } from "@/lib/format";
+import { formatDeadline, getCountdown, truncateErrorMessage } from "@/lib/format";
 import { decodeMarketDetails, decodeMarketView } from "@/lib/market-contract";
 import { getMarketAsset, getMarketStatus, getMarketStatusBlurb, getMarketType } from "@/lib/market-ui";
 import { getRuntimeDiagnostics } from "@/lib/runtime-config";
@@ -61,6 +61,7 @@ export default function MarketDetailPage() {
   const [selectedOutcome, setSelectedOutcome] = useState(0);
   const [amount, setAmount] = useState("0.1");
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [isErrorMessage, setIsErrorMessage] = useState(false);
   const [successState, setSuccessState] = useState<ActionSuccessState | null>(null);
   const [isBetting, setIsBetting] = useState(false);
   const [isDecrypting, setIsDecrypting] = useState(false);
@@ -257,6 +258,7 @@ export default function MarketDetailPage() {
 
     setIsBetting(true);
     setStatusMessage("Preparing encrypted position...");
+    setIsErrorMessage(false);
     try {
       const stakeAmount = parseStakeAmount();
       const encrypted = await encryptBetInputs(selectedOutcome, stakeAmount, {
@@ -268,6 +270,7 @@ export default function MarketDetailPage() {
         const allowance = (tokenAllowance as bigint) || 0n;
         if (allowance < stakeAmount) {
           setStatusMessage("Approving token spend...");
+          setIsErrorMessage(false);
           const approveHash = await writeContractAsync({
             address: quoteToken,
             abi: erc20Abi,
@@ -280,6 +283,7 @@ export default function MarketDetailPage() {
       }
 
       setStatusMessage("Check wallet to sign your bet...");
+      setIsErrorMessage(false);
       const txHash = await writeContractAsync({
         ...shieldBetConfig,
         functionName: "placeBet",
@@ -296,9 +300,12 @@ export default function MarketDetailPage() {
         secondaryAction: { label: "Stay Here", variant: "secondary" }
       });
       setStatusMessage("Bet placed successfully.");
+      setIsErrorMessage(false);
     } catch (error) {
       logError("market-detail", "bet failed", error);
-      setStatusMessage(error instanceof Error ? error.message : "Bet failed");
+      const errorMessage = error instanceof Error ? error.message : "Bet failed";
+      setStatusMessage(truncateErrorMessage(errorMessage));
+      setIsErrorMessage(true);
     } finally {
       setIsBetting(false);
     }
@@ -306,6 +313,7 @@ export default function MarketDetailPage() {
 
   async function onPropose(outcomeIndex: number) {
     setStatusMessage("Submitting outcome proposal...");
+    setIsErrorMessage(false);
     try {
       const txHash = await writeContractAsync({
         ...shieldBetConfig,
@@ -322,14 +330,18 @@ export default function MarketDetailPage() {
         primaryAction: { label: "Continue" }
       });
       setStatusMessage("Outcome proposed.");
+      setIsErrorMessage(false);
     } catch (error) {
       logError("market-detail", "propose failed", error);
-      setStatusMessage(error instanceof Error ? error.message : "Propose failed");
+      const errorMessage = error instanceof Error ? error.message : "Propose failed";
+      setStatusMessage(truncateErrorMessage(errorMessage));
+      setIsErrorMessage(true);
     }
   }
 
   async function onChallenge() {
     setStatusMessage("Submitting challenge...");
+    setIsErrorMessage(false);
     try {
       const txHash = await writeContractAsync({
         ...shieldBetConfig,
@@ -346,14 +358,18 @@ export default function MarketDetailPage() {
         primaryAction: { label: "Continue" }
       });
       setStatusMessage("Challenge submitted.");
+      setIsErrorMessage(false);
     } catch (error) {
       logError("market-detail", "challenge failed", error);
-      setStatusMessage(error instanceof Error ? error.message : "Challenge failed");
+      const errorMessage = error instanceof Error ? error.message : "Challenge failed";
+      setStatusMessage(truncateErrorMessage(errorMessage));
+      setIsErrorMessage(true);
     }
   }
 
   async function onFinalizeUndisputed() {
     setStatusMessage("Finalizing undisputed market...");
+    setIsErrorMessage(false);
     try {
       const txHash = await writeContractAsync({
         ...shieldBetConfig,
@@ -369,14 +385,18 @@ export default function MarketDetailPage() {
         primaryAction: { label: "Continue" }
       });
       setStatusMessage("Market finalized.");
+      setIsErrorMessage(false);
     } catch (error) {
       logError("market-detail", "undisputed finalize failed", error);
-      setStatusMessage(error instanceof Error ? error.message : "Finalize failed");
+      const errorMessage = error instanceof Error ? error.message : "Finalize failed";
+      setStatusMessage(truncateErrorMessage(errorMessage));
+      setIsErrorMessage(true);
     }
   }
 
   async function onFinalizeDisputed() {
     setStatusMessage("Finalizing disputed market...");
+    setIsErrorMessage(false);
     try {
       const txHash = await writeContractAsync({
         ...shieldBetConfig,
@@ -392,15 +412,19 @@ export default function MarketDetailPage() {
         primaryAction: { label: "Continue" }
       });
       setStatusMessage("Dispute finalized.");
+      setIsErrorMessage(false);
     } catch (error) {
       logError("market-detail", "disputed finalize failed", error);
-      setStatusMessage(error instanceof Error ? error.message : "Disputed finalize failed");
+      const errorMessage = error instanceof Error ? error.message : "Disputed finalize failed";
+      setStatusMessage(truncateErrorMessage(errorMessage));
+      setIsErrorMessage(true);
     }
   }
 
   async function onOpenSettlementTotals() {
     setIsOpenSettlementSubmitting(true);
     setStatusMessage("Opening settlement totals...");
+    setIsErrorMessage(false);
     try {
       const txHash = await writeContractAsync({
         ...shieldBetConfig,
@@ -416,9 +440,12 @@ export default function MarketDetailPage() {
         primaryAction: { label: "Continue" }
       });
       setStatusMessage("Settlement totals opened.");
+      setIsErrorMessage(false);
     } catch (error) {
       logError("market-detail", "open settlement totals failed", error);
-      setStatusMessage(error instanceof Error ? error.message : "Failed to open settlement totals");
+      const errorMessage = error instanceof Error ? error.message : "Failed to open settlement totals";
+      setStatusMessage(truncateErrorMessage(errorMessage));
+      setIsErrorMessage(true);
     } finally {
       setIsOpenSettlementSubmitting(false);
     }
@@ -447,9 +474,12 @@ export default function MarketDetailPage() {
         primaryAction: { label: "Continue" }
       });
       setStatusMessage("Winning total published.");
+      setIsErrorMessage(false);
     } catch (error) {
       logError("market-detail", "publish winning total failed", error);
-      setStatusMessage(error instanceof Error ? error.message : "Failed to publish winning total");
+      const errorMessage = error instanceof Error ? error.message : "Failed to publish winning total";
+      setStatusMessage(truncateErrorMessage(errorMessage));
+      setIsErrorMessage(true);
     } finally {
       setIsPublishingWinningTotal(false);
     }
@@ -527,7 +557,9 @@ export default function MarketDetailPage() {
       });
     } catch (error) {
       logError("market-detail", "claim failed", error);
-      setStatusMessage(error instanceof Error ? error.message : "Claim failed");
+      const errorMessage = error instanceof Error ? error.message : "Claim failed";
+      setStatusMessage(truncateErrorMessage(errorMessage));
+      setIsErrorMessage(true);
     } finally {
       setIsClaiming(false);
     }
@@ -625,7 +657,7 @@ export default function MarketDetailPage() {
               </div>
 
               <div className="mt-6 grid gap-4 md:grid-cols-2">
-                <div className="rounded-[1.5rem] border border-white/8 bg-black/20 p-5 space-y-4">
+                <div className="rounded-[1.5rem] border border-white/8 bg-black/20 p-5 space-y-3">
                   {isExpired ? (
                     <>
                       <p className="text-sm leading-7 text-white/68">The market has expired. Anyone can propose the winning outcome by staking {oracleStake ? Number(formatEther(oracleStake)).toFixed(2) : "0.01"} ETH.</p>
@@ -687,7 +719,7 @@ export default function MarketDetailPage() {
                   ) : null}
                 </div>
 
-                <div className="rounded-[1.5rem] border border-white/8 bg-black/20 p-5 space-y-4">
+                <div className="rounded-[1.5rem] border border-white/8 bg-black/20 p-5 space-y-3">
                   <div>
                     <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/35">Settlement</div>
                     <p className="mt-3 text-sm leading-7 text-white/68">Finalized markets first open encrypted aggregate totals, then publish the winning total, then winners claim automatically with an attested authorization.</p>
@@ -733,7 +765,7 @@ export default function MarketDetailPage() {
             onSubmit={onPlaceBet}
           />
 
-          <div className="vm-card space-y-4 p-6 md:p-7">
+          <div className="vm-card space-y-3 p-6 md:p-7">
             <div className="flex items-center gap-3 text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--primary)]">
               <Wallet className="h-4 w-4" />
               Your Position
@@ -781,7 +813,11 @@ export default function MarketDetailPage() {
               <p>Resolution source: {parsedDetails.resolutionSource}</p>
               {parsedDetails.quoteToken !== ZERO_ADDRESS ? <p>Quote token: {parsedDetails.quoteToken}</p> : null}
               {parsedMarket.publishedWinningTotal > 0n ? <p>Published winning total: {parsedMarket.publishedWinningTotal.toString()}</p> : null}
-              {statusMessage ? <p className="text-[var(--primary)]">{statusMessage}</p> : null}
+              {statusMessage ? (
+                <p className={isErrorMessage ? "text-red-300" : "text-[var(--primary)]"}>
+                  {statusMessage}
+                </p>
+              ) : null}
             </div>
           </div>
 
